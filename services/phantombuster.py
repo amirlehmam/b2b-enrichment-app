@@ -41,17 +41,22 @@ class PhantombusterClient:
         if not self.agent_id:
             raise ValueError("PHANTOMBUSTER_AGENT_ID non configuré")
 
-        # Body JSON avec id et argument
+        # Body JSON avec id et argument (argument en JSON string pour compatibilité)
+        argument_obj = {
+            "spreadsheetUrl": linkedin_company_url,
+            "numberOfEmployeesToExtract": 50,
+        }
+
         body = {
             "id": self.agent_id,
-            "argument": {
-                "spreadsheetUrl": linkedin_company_url,
-                "numberOfEmployeesToExtract": 50,
-            }
+            "argument": json.dumps(argument_obj),  # Convert to JSON string
         }
 
         try:
             print(f"  → Lancement extraction: {linkedin_company_url}")
+            print(f"  [DEBUG] Agent ID: '{self.agent_id}'")
+            print(f"  [DEBUG] API Key: '{self.api_key[:15]}...'")
+            print(f"  [DEBUG] Body: {json.dumps(body)}")
 
             response = requests.post(
                 f"{self.base_url}/agents/launch",
@@ -59,6 +64,9 @@ class PhantombusterClient:
                 json=body,
                 timeout=30
             )
+
+            print(f"  [DEBUG] Response status: {response.status_code}")
+            print(f"  [DEBUG] Response body: {response.text[:300]}")
 
             if response.status_code == 200:
                 data = response.json()

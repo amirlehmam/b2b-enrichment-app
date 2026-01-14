@@ -83,6 +83,9 @@ class PappersClient:
 
     def _parse_company(self, raw: dict) -> dict:
         """Parse les données brutes d'une entreprise"""
+        # Pappers peut retourner 'representants' ou 'dirigeants' selon l'endpoint
+        representants = raw.get("representants", []) or raw.get("dirigeants", []) or []
+
         return {
             "siren": raw.get("siren"),
             "siret": raw.get("siret_siege"),
@@ -95,7 +98,7 @@ class PappersClient:
             "code_naf": raw.get("code_naf"),
             "activite": raw.get("libelle_code_naf"),
             "convention_collective": raw.get("convention_collective"),
-            "dirigeants": self._parse_dirigeants(raw.get("representants", [])),
+            "dirigeants": self._parse_dirigeants(representants),
         }
 
     def _format_address(self, raw: dict) -> str:
@@ -120,7 +123,7 @@ class PappersClient:
         return dirigeants
 
     def get_company_by_siren(self, siren: str) -> dict:
-        """Récupère les détails d'une entreprise par SIREN"""
+        """Récupère les détails d'une entreprise par SIREN avec representants"""
         response = requests.get(
             f"{self.base_url}/entreprise",
             params={
@@ -129,7 +132,19 @@ class PappersClient:
             }
         )
         response.raise_for_status()
-        return self._parse_company(response.json())
+        data = response.json()
+
+        # Debug: voir tous les champs retournés
+        print(f"    [DEBUG] API /entreprise keys: {list(data.keys())}")
+        print(f"    [DEBUG] 'representants' in data: {'representants' in data}")
+        print(f"    [DEBUG] 'dirigeants' in data: {'dirigeants' in data}")
+
+        reps = data.get('representants', []) or data.get('dirigeants', [])
+        print(f"    [DEBUG] Nombre de representants/dirigeants: {len(reps) if reps else 0}")
+        if reps:
+            print(f"    [DEBUG] Premier: {reps[0] if reps else 'N/A'}")
+
+        return self._parse_company(data)
 
 
 def get_target_companies(max_results: int = None, fetch_details: bool = True) -> list:
@@ -158,14 +173,23 @@ def get_target_companies(max_results: int = None, fetch_details: bool = True) ->
     # Récupérer les détails complets pour avoir les dirigeants
     if fetch_details:
         detailed_companies = []
+        print(f"  [INFO] Récupération des détails pour {len(companies)} entreprises...")
         for company in companies:
             try:
+                print(f"  → Appel API /entreprise pour SIREN {company['siren']}...")
                 detailed = client.get_company_by_siren(company["siren"])
+                dirigeants = detailed.get('dirigeants', [])
+                print(f"  ✓ {company['nom']}: {len(dirigeants)} dirigeants trouvés")
+                if dirigeants:
+                    for d in dirigeants[:3]:  # Show first 3
+                        print(f"      - {d.get('nom')} ({d.get('qualite')})")
                 detailed_companies.append(detailed)
-                print(f"  Détails récupérés pour {company['nom']} ({len(detailed.get('dirigeants', []))} dirigeants)")
             except Exception as e:
-                print(f"  Erreur détails pour {company['nom']}: {e}")
+                print(f"  ✗ Erreur pour {company['nom']}: {e}")
                 detailed_companies.append(company)
+
+        total_dirigeants = sum(len(c.get('dirigeants', [])) for c in detailed_companies)
+        print(f"  [TOTAL] {total_dirigeants} dirigeants pour {len(detailed_companies)} entreprises")
         return detailed_companies
 
     return companies
