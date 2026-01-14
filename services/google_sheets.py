@@ -292,6 +292,7 @@ def sync_contacts_to_sheets(contacts: List[dict], spreadsheet_id: str = None) ->
 def append_contacts_to_sheets(contacts: List[dict], spreadsheet_id: str = None) -> int:
     """
     Ajoute des contacts à la feuille existante (sans effacer).
+    Ajoute automatiquement un timestamp pour chaque contact.
 
     Args:
         contacts: Liste des contacts à ajouter
@@ -300,6 +301,8 @@ def append_contacts_to_sheets(contacts: List[dict], spreadsheet_id: str = None) 
     Returns:
         Nombre de contacts ajoutés
     """
+    from datetime import datetime
+
     spreadsheet_id = spreadsheet_id or config.GOOGLE_SHEETS_SPREADSHEET_ID
 
     if not spreadsheet_id or not GSPREAD_AVAILABLE:
@@ -309,29 +312,87 @@ def append_contacts_to_sheets(contacts: List[dict], spreadsheet_id: str = None) 
         client = GoogleSheetsClient()
 
         headers = [
-            "name", "title", "entreprise", "siren", "persona_type",
+            "date_ajout", "name", "title", "entreprise", "siren", "persona_type",
             "linkedin_url", "email", "email_verified", "phone", "phone_type"
         ]
 
-        # Convertir en lignes
+        # Timestamp pour ce batch
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+        # Convertir en lignes avec timestamp
         rows = []
         for contact in contacts:
-            row = [str(contact.get(h, "")) for h in headers]
+            row = [timestamp] + [str(contact.get(h, "")) for h in headers[1:]]
             rows.append(row)
 
         count = client.append_rows(
             spreadsheet_id,
-            "Contacts",
+            "Contacts_Historique",  # Nouvelle feuille pour l'historique
             rows,
             headers
         )
 
-        print(f"✅ {count} contacts ajoutés à Google Sheets")
+        print(f"✅ {count} contacts ajoutés à l'historique Google Sheets")
         return count
 
     except Exception as e:
         print(f"❌ Erreur append Google Sheets: {e}")
         return 0
+
+
+def get_all_contacts_from_sheets(spreadsheet_id: str = None) -> List[dict]:
+    """
+    Récupère tous les contacts sauvegardés depuis Google Sheets.
+
+    Args:
+        spreadsheet_id: ID du spreadsheet
+
+    Returns:
+        Liste de tous les contacts avec leur historique
+    """
+    spreadsheet_id = spreadsheet_id or config.GOOGLE_SHEETS_SPREADSHEET_ID
+
+    if not spreadsheet_id or not GSPREAD_AVAILABLE:
+        return []
+
+    try:
+        client = GoogleSheetsClient()
+        spreadsheet = client.open_spreadsheet(spreadsheet_id)
+
+        try:
+            worksheet = spreadsheet.worksheet("Contacts_Historique")
+        except:
+            print("  ℹ Aucun historique trouvé")
+            return []
+
+        # Récupérer toutes les données
+        records = worksheet.get_all_records()
+        print(f"  ✓ {len(records)} contacts trouvés dans l'historique")
+        return records
+
+    except Exception as e:
+        print(f"❌ Erreur lecture Google Sheets: {e}")
+        return []
+
+
+def get_contacts_stats(spreadsheet_id: str = None) -> dict:
+    """
+    Récupère des stats sur les contacts sauvegardés.
+
+    Returns:
+        dict avec total, avec_email, avec_phone, entreprises_uniques
+    """
+    contacts = get_all_contacts_from_sheets(spreadsheet_id)
+
+    if not contacts:
+        return {"total": 0, "avec_email": 0, "avec_phone": 0, "entreprises": 0}
+
+    return {
+        "total": len(contacts),
+        "avec_email": len([c for c in contacts if c.get("email")]),
+        "avec_phone": len([c for c in contacts if c.get("phone")]),
+        "entreprises": len(set(c.get("entreprise", "") for c in contacts if c.get("entreprise"))),
+    }
 
 
 if __name__ == "__main__":

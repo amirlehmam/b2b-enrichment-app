@@ -285,15 +285,19 @@ def run_pipeline_with_logs(max_companies, skip_phantombuster):
                 st.error(f"❌ Étape 7 ERREUR: {str(e)}")
                 update_step_state(7, status=StepStatus.FAILED, error_message=str(e))
 
-        # STEP 8 - Google Sheets
+        # STEP 8 - Google Sheets (APPEND to history)
         with st.spinner("Étape 8/9: Google Sheets..."):
-            st.write("🔄 **Étape 8:** Synchronisation Google Sheets...")
+            st.write("🔄 **Étape 8:** Sauvegarde dans l'historique Google Sheets...")
             try:
                 import config
+                from services.google_sheets import append_contacts_to_sheets, sync_companies_to_sheets
                 if config.GOOGLE_SHEETS_SPREADSHEET_ID and config.GOOGLE_SHEETS_CREDENTIALS:
-                    sheets_result = run_step_8_google_sheets(companies, enriched)
-                    update_step_state(8, status=StepStatus.COMPLETED, result_count=sheets_result.get("contacts", 0))
-                    st.success(f"✅ Étape 8: {sheets_result.get('contacts', 0)} contacts sync")
+                    # Sync entreprises (écrase)
+                    sync_companies_to_sheets(companies)
+                    # APPEND contacts à l'historique (ne supprime pas les anciens)
+                    count = append_contacts_to_sheets(enriched)
+                    update_step_state(8, status=StepStatus.COMPLETED, result_count=count)
+                    st.success(f"✅ Étape 8: {count} contacts ajoutés à l'historique")
                 else:
                     st.info("⏭️ Google Sheets non configuré - étape sautée")
                     update_step_state(8, status=StepStatus.SKIPPED)
@@ -409,7 +413,7 @@ if run_btn:
     run_pipeline_with_logs(max_companies, skip_phantombuster)
 
 # Data display
-tab1, tab2 = st.tabs(["🏢 Entreprises", "👤 Contacts"])
+tab1, tab2, tab3 = st.tabs(["🏢 Entreprises", "👤 Contacts", "📚 Historique"])
 
 with tab1:
     companies = st.session_state.get("companies", [])
@@ -433,9 +437,66 @@ with tab2:
     else:
         st.info("Lancez le pipeline pour voir les contacts")
 
+with tab3:
+    st.subheader("📚 Tous vos contacts sauvegardés")
+    st.caption("Historique de toutes vos recherches (stocké dans Google Sheets)")
+
+    load_history = st.button("🔄 Charger l'historique", use_container_width=True)
+
+    if load_history:
+        try:
+            from services.google_sheets import get_all_contacts_from_sheets, get_contacts_stats
+            import config
+
+            if not config.GOOGLE_SHEETS_SPREADSHEET_ID or not config.GOOGLE_SHEETS_CREDENTIALS:
+                st.warning("⚠️ Google Sheets non configuré")
+            else:
+                with st.spinner("Chargement de l'historique..."):
+                    history = get_all_contacts_from_sheets()
+                    st.session_state["history_contacts"] = history
+
+                if history:
+                    st.success(f"✅ {len(history)} contacts chargés")
+                else:
+                    st.info("Aucun contact dans l'historique")
+        except Exception as e:
+            st.error(f"Erreur: {str(e)}")
+
+    # Display history if loaded
+    history = st.session_state.get("history_contacts", [])
+    if history:
+        df = pd.DataFrame(history)
+
+        # Filters
+        col1, col2 = st.columns(2)
+        with col1:
+            filter_email = st.checkbox("Avec email uniquement", value=False)
+        with col2:
+            filter_phone = st.checkbox("Avec téléphone uniquement", value=False)
+
+        # Apply filters
+        if filter_email:
+            df = df[df["email"].astype(str).str.len() > 0]
+        if filter_phone:
+            df = df[df["phone"].astype(str).str.len() > 0]
+
+        # Stats
+        st.markdown(f"""
+        **Stats:** {len(df)} contacts | {len(df[df['email'].astype(str).str.len() > 0])} avec email | {len(df[df['phone'].astype(str).str.len() > 0])} avec tel
+        """)
+
+        # Display
+        show_cols = [c for c in ["date_ajout", "name", "title", "entreprise", "email", "phone"] if c in df.columns]
+        st.dataframe(df[show_cols], use_container_width=True, height=400)
+
+        # Download
+        csv = df.to_csv(index=False).encode('utf-8')
+        st.download_button("📥 Télécharger tout l'historique (CSV)", csv, "historique_contacts.csv", use_container_width=True)
+
 # Footer
 st.divider()
-c1, c2, c3 = st.columns(3)
+c1, c2, c3, c4 = st.columns(4)
 c1.metric("Entreprises", len(st.session_state.get("companies", [])))
 c2.metric("Décideurs", len(st.session_state.get("decision_makers", [])))
 c3.metric("Avec Email", len([c for c in st.session_state.get("enriched_contacts", []) if c.get("email")]))
+c4.metric("📚 Historique", len(st.session_state.get("history_contacts", [])))
