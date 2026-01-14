@@ -182,9 +182,16 @@ def run_pipeline_with_logs(max_companies, skip_phantombuster):
             update_step_state(4, status=StepStatus.SKIPPED)
 
             st.write("🔄 **Étape 5:** Extraction dirigeants depuis Pappers...")
+
+            # DEBUG: Voir ce qu'on a dans companies
+            st.write(f"   📊 Debug: {len(companies)} entreprises à traiter")
+
             all_decision_makers = []
             for company in companies:
-                for dirigeant in company.get("dirigeants", []):
+                dirigeants = company.get("dirigeants", [])
+                st.write(f"   → {company.get('nom', '?')}: {len(dirigeants)} dirigeants")
+
+                for dirigeant in dirigeants:
                     all_decision_makers.append({
                         "name": dirigeant.get("nom"),
                         "title": dirigeant.get("qualite"),
@@ -192,6 +199,7 @@ def run_pipeline_with_logs(max_companies, skip_phantombuster):
                         "siren": company["siren"],
                         "persona_type": "Dirigeant",
                     })
+
             st.session_state.decision_makers = all_decision_makers
             update_step_state(5, status=StepStatus.COMPLETED, result_count=len(all_decision_makers))
             st.success(f"✅ Étape 5: {len(all_decision_makers)} dirigeants extraits")
