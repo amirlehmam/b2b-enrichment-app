@@ -1,11 +1,10 @@
 """
 Client API Phantombuster pour l'extraction des employés LinkedIn
-Documentation: https://hub.phantombuster.com/docs/api
+Documentation: https://hub.phantombuster.com/reference/post_agents-launch
 
-OPTIMIZED VERSION:
-- Uses blocking API calls (output=result-object) - no polling!
-- Parallel processing of multiple companies
-- 10x faster than original implementation
+API v2 - Le body JSON doit contenir:
+- id: agent ID
+- argument: objet ou string JSON avec les paramètres
 """
 import requests
 import json
@@ -16,7 +15,7 @@ import config
 
 
 class PhantombusterClient:
-    """Client optimisé pour l'API Phantombuster"""
+    """Client pour l'API Phantombuster v2"""
 
     def __init__(self, api_key: str = None, agent_id: str = None):
         self.api_key = api_key or config.PHANTOMBUSTER_API_KEY
@@ -29,144 +28,204 @@ class PhantombusterClient:
             "Content-Type": "application/json",
         }
 
-    def launch_and_wait(self, linkedin_company_url: str, timeout: int = 600) -> Optional[List[dict]]:
+    def launch_agent(self, linkedin_company_url: str) -> Optional[str]:
         """
-        Lance l'agent et attend le résultat (appel bloquant).
-
-        Utilise output=result-object pour un appel bloquant -
-        PAS DE POLLING, beaucoup plus rapide!
+        Lance un agent Phantombuster.
 
         Args:
             linkedin_company_url: URL LinkedIn de l'entreprise
-            timeout: Timeout en secondes (défaut 10 min)
 
         Returns:
-            Liste des employés ou None si erreur
+            Container ID ou None si erreur
         """
         if not self.agent_id:
             raise ValueError("PHANTOMBUSTER_AGENT_ID non configuré")
 
-        # Préparer l'argument JSON
-        argument = json.dumps({
-            "spreadsheetUrl": linkedin_company_url,
-            "numberOfEmployeesToExtract": 50,  # Limiter pour la vitesse
-        })
+        # Body JSON avec id et argument
+        body = {
+            "id": self.agent_id,
+            "argument": {
+                "spreadsheetUrl": linkedin_company_url,
+                "numberOfEmployeesToExtract": 50,
+            }
+        }
 
         try:
             print(f"  → Lancement extraction: {linkedin_company_url}")
 
-            # Appel BLOQUANT - pas besoin de polling!
             response = requests.post(
                 f"{self.base_url}/agents/launch",
                 headers=self._headers(),
-                params={
-                    "id": self.agent_id,
-                    "argument": argument,
-                    "output": "result-object",  # BLOCKING CALL!
-                },
-                timeout=timeout
+                json=body,
+                timeout=30
             )
 
             if response.status_code == 200:
                 data = response.json()
-
-                # Vérifier le statut
-                if data.get("status") == "success":
-                    result_object = data.get("data", {}).get("resultObject")
-                    if result_object:
-                        return self._parse_employees(result_object)
-
-                    # Si pas de resultObject, essayer de récupérer depuis S3
-                    return self._fetch_from_s3()
-                else:
-                    print(f"  ⚠ Agent terminé avec statut: {data.get('status')}")
-                    print(f"    Message: {data.get('message', 'N/A')}")
-                    return []
+                container_id = data.get("containerId")
+                print(f"  ✓ Agent lancé, container: {container_id}")
+                return container_id
             else:
                 print(f"  ✗ Erreur HTTP {response.status_code}: {response.text[:200]}")
                 return None
 
-        except requests.exceptions.Timeout:
-            print(f"  ✗ Timeout après {timeout}s")
-            return None
         except requests.exceptions.RequestException as e:
             print(f"  ✗ Erreur requête: {e}")
             return None
 
-    def _parse_employees(self, result_object) -> List[dict]:
-        """Parse le resultObject en liste d'employés."""
-        if isinstance(result_object, list):
-            employees = result_object
-        elif isinstance(result_object, dict):
-            employees = result_object.get("employees", [])
+    def wait_for_completion(self, container_id: str, timeout: int = 300, poll_interval: int = 10) -> bool:
+        """
+        Attend la fin de l'exécution d'un agent.
+
+        Args:
+            container_id: ID du container
+            timeout: Timeout en secondes
+            poll_interval: Intervalle de polling en secondes
+
+        Returns:
+            True si terminé avec succès
+        """
+        start_time = time.time()
+
+        while time.time() - start_time < timeout:
+            try:
+                response = requests.get(
+                    f"{self.base_url}/containers/fetch",
+                    headers=self._headers(),
+                    params={"id": container_id},
+                    timeout=10
+                )
+
+                if response.status_code == 200:
+                    data = response.json()
+                    status = data.get("status")
+
+                    if status == "finished":
+                        print(f"  ✓ Container terminé")
+                        return True
+                    elif status == "error":
+                        print(f"  ✗ Container erreur: {data.get('error', 'N/A')}")
+                        return False
+
+                print(f"  ... en cours (attente {poll_interval}s)")
+                time.sleep(poll_interval)
+
+            except Exception as e:
+                print(f"  ⚠ Erreur polling: {e}")
+                time.sleep(poll_interval)
+
+        print(f"  ✗ Timeout après {timeout}s")
+        return False
+
+    def get_output(self) -> List[dict]:
+        """
+        Récupère les résultats de l'agent depuis S3.
+
+        Returns:
+            Liste des employés
+        """
+        try:
+            # Récupérer infos agent
+            response = requests.get(
+                f"{self.base_url}/agents/fetch",
+                headers=self._headers(),
+                params={"id": self.agent_id},
+                timeout=10
+            )
+
+            if response.status_code != 200:
+                print(f"  ⚠ Erreur fetch agent: {response.status_code}")
+                return []
+
+            agent_data = response.json()
+            s3_folder = agent_data.get("s3Folder")
+            org_s3_folder = agent_data.get("orgS3Folder")
+
+            if not s3_folder or not org_s3_folder:
+                print("  ⚠ S3 folder non trouvé")
+                return []
+
+            # Récupérer résultat depuis S3
+            result_url = f"https://phantombuster.s3.amazonaws.com/{org_s3_folder}/{s3_folder}/result.json"
+            result_response = requests.get(result_url, timeout=30)
+
+            if result_response.status_code != 200:
+                print(f"  ⚠ Erreur S3: {result_response.status_code}")
+                return []
+
+            employees = result_response.json()
+            return self._parse_employees(employees)
+
+        except Exception as e:
+            print(f"  ✗ Erreur output: {e}")
+            return []
+
+    def _parse_employees(self, data) -> List[dict]:
+        """Parse les données en liste d'employés."""
+        if isinstance(data, list):
+            employees = data
+        elif isinstance(data, dict):
+            employees = data.get("employees", data.get("results", [data]))
         else:
             return []
 
         valid_employees = []
         for emp in employees:
-            if emp.get("profileUrl") or emp.get("linkedInProfileUrl"):
+            profile_url = emp.get("profileUrl") or emp.get("linkedInProfileUrl") or emp.get("linkedin_url")
+            name = emp.get("name") or emp.get("fullName") or f"{emp.get('firstName', '')} {emp.get('lastName', '')}".strip()
+
+            if profile_url and name:
                 valid_employees.append({
-                    "name": emp.get("name", emp.get("fullName", "")),
+                    "name": name,
                     "firstName": emp.get("firstName", ""),
                     "lastName": emp.get("lastName", ""),
-                    "title": emp.get("job", emp.get("title", emp.get("headline", ""))),
-                    "linkedin_url": emp.get("profileUrl", emp.get("linkedInProfileUrl", "")),
+                    "title": emp.get("job") or emp.get("title") or emp.get("headline", ""),
+                    "linkedin_url": profile_url,
                     "location": emp.get("location", ""),
                     "company_query": emp.get("query", ""),
                 })
 
         return valid_employees
 
-    def _fetch_from_s3(self) -> List[dict]:
-        """Récupère les résultats depuis S3 (fallback)."""
-        try:
-            response = requests.get(
-                f"{self.base_url}/agents/fetch-output",
-                headers=self._headers(),
-                params={"id": self.agent_id}
-            )
 
-            if response.status_code == 200:
-                data = response.json()
-                if data.get("data", {}).get("output"):
-                    # Parse le JSON output
-                    output = json.loads(data["data"]["output"])
-                    return self._parse_employees(output)
-            return []
-        except Exception as e:
-            print(f"  ⚠ Erreur S3 fallback: {e}")
-            return []
-
-    def get_agent_status(self) -> dict:
-        """Récupère le statut de l'agent."""
-        try:
-            response = requests.get(
-                f"{self.base_url}/agents/fetch",
-                headers=self._headers(),
-                params={"id": self.agent_id}
-            )
-            response.raise_for_status()
-            return response.json()
-        except requests.exceptions.RequestException as e:
-            print(f"Erreur statut agent: {e}")
-            return {}
-
-
-def extract_employees_batch(companies: List[dict], max_workers: int = 3) -> Dict[str, dict]:
+def extract_employees_from_linkedin(linkedin_url: str, agent_id: str = None) -> list:
     """
-    Extrait les employés de PLUSIEURS entreprises en PARALLÈLE.
-
-    BEAUCOUP plus rapide que l'extraction séquentielle!
+    Extrait les employés d'une entreprise via Phantombuster.
 
     Args:
-        companies: Liste des entreprises avec linkedin_url
-        max_workers: Nombre de workers parallèles (défaut 3 pour éviter rate limits)
+        linkedin_url: URL LinkedIn de l'entreprise
+        agent_id: ID de l'agent (optionnel)
+
+    Returns:
+        Liste des employés
+    """
+    client = PhantombusterClient(agent_id=agent_id)
+
+    # Lancer l'agent
+    container_id = client.launch_agent(linkedin_url)
+    if not container_id:
+        return []
+
+    # Attendre la fin
+    if not client.wait_for_completion(container_id):
+        return []
+
+    # Récupérer les résultats
+    employees = client.get_output()
+    return employees
+
+
+def extract_employees_batch(companies: List[dict], max_workers: int = 2) -> Dict[str, dict]:
+    """
+    Extrait les employés de plusieurs entreprises.
+
+    Args:
+        companies: Liste des entreprises
+        max_workers: Nombre de workers parallèles
 
     Returns:
         Dict {siren: {"company": company, "employees": [...]}}
     """
-    client = PhantombusterClient()
-
     # Filtrer les entreprises avec LinkedIn
     companies_with_linkedin = [c for c in companies if c.get("linkedin_url")]
 
@@ -174,19 +233,17 @@ def extract_employees_batch(companies: List[dict], max_workers: int = 3) -> Dict
         print("Aucune entreprise avec URL LinkedIn")
         return {}
 
-    print(f"\n🚀 Extraction parallèle de {len(companies_with_linkedin)} entreprises...")
-    print(f"   (max {max_workers} en parallèle)")
+    print(f"\n🚀 Extraction de {len(companies_with_linkedin)} entreprises...")
 
     results = {}
 
-    def process_company(company):
-        """Traite une entreprise."""
+    for company in companies_with_linkedin:
         linkedin_url = company.get("linkedin_url")
         siren = company.get("siren")
         nom = company.get("nom", "?")
 
         print(f"\n📍 {nom}")
-        employees = client.launch_and_wait(linkedin_url)
+        employees = extract_employees_from_linkedin(linkedin_url)
 
         if employees:
             print(f"  ✓ {len(employees)} employés trouvés")
@@ -194,22 +251,10 @@ def extract_employees_batch(companies: List[dict], max_workers: int = 3) -> Dict
             print(f"  ⚠ Aucun employé trouvé")
             employees = []
 
-        return siren, {"company": company, "employees": employees}
+        results[siren] = {"company": company, "employees": employees}
 
-    # Exécution parallèle
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {
-            executor.submit(process_company, company): company
-            for company in companies_with_linkedin
-        }
-
-        for future in as_completed(futures):
-            try:
-                siren, data = future.result()
-                results[siren] = data
-            except Exception as e:
-                company = futures[future]
-                print(f"  ✗ Erreur pour {company.get('nom', '?')}: {e}")
+        # Pause entre les appels
+        time.sleep(2)
 
     total_employees = sum(len(d["employees"]) for d in results.values())
     print(f"\n✅ Total: {total_employees} employés extraits de {len(results)} entreprises")
@@ -217,29 +262,16 @@ def extract_employees_batch(companies: List[dict], max_workers: int = 3) -> Dict
     return results
 
 
-def extract_employees_from_linkedin(linkedin_url: str, agent_id: str = None) -> list:
-    """
-    Extrait les employés d'une entreprise via Phantombuster.
-
-    Version compatible avec l'ancien code (appel unique).
-    Pour les batches, utiliser extract_employees_batch() à la place.
-    """
-    client = PhantombusterClient(agent_id=agent_id)
-    employees = client.launch_and_wait(linkedin_url)
-    return employees or []
-
-
 if __name__ == "__main__":
-    print("Test de l'API Phantombuster (version optimisée)...")
+    print("Test de l'API Phantombuster...")
 
     if not config.PHANTOMBUSTER_AGENT_ID:
-        print("ERREUR: PHANTOMBUSTER_AGENT_ID non configuré dans config.py")
+        print("ERREUR: PHANTOMBUSTER_AGENT_ID non configuré")
         print("Instructions:")
         print("1. Allez sur https://phantombuster.com")
-        print("2. Cliquez sur 'My Agents'")
-        print("3. Ouvrez votre agent LinkedIn Company Employees")
-        print("4. Copiez l'ID depuis l'URL (les chiffres après /agents/)")
+        print("2. Ouvrez votre agent LinkedIn Company Employees")
+        print("3. Copiez l'ID depuis l'URL (après /phantoms/)")
     else:
         client = PhantombusterClient()
-        status = client.get_agent_status()
-        print(f"Statut agent: {json.dumps(status, indent=2)}")
+        print(f"Agent ID: {client.agent_id}")
+        print(f"API Key: {client.api_key[:10]}...")
