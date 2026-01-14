@@ -44,7 +44,7 @@ EMELIA_API_KEY = get_secret("EMELIA_API_KEY")
 PAPPERS_BASE_URL = "https://api.pappers.fr/v2"
 PHANTOMBUSTER_BASE_URL = "https://api.phantombuster.com/api/v2"
 ENRICH_CRM_BASE_URL = "https://gateway.enrich-crm.com/api/ingress/v4"
-CAPTELY_BASE_URL = "https://api.captely.com"
+CAPTELY_BASE_URL = "https://app.captely.com/api"
 CLAUDE_BASE_URL = "https://api.anthropic.com/v1"
 
 # ============================================
