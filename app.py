@@ -260,17 +260,82 @@ def run_pipeline_with_logs(max_companies, skip_phantombuster):
             st.warning("⚠️ Aucun décideur trouvé. Arrêt.")
             return False
 
-        # STEP 6 - Captely
+        # STEP 6 - Captely (avec debug direct)
         with st.spinner("Étape 6/9: Enrichissement Captely..."):
             st.write("🔄 **Étape 6:** Enrichissement emails/téléphones...")
             try:
+                from services.captely import CaptelyClient
+                import config
+
+                st.write(f"   📊 {len(all_decision_makers)} contacts à enrichir")
+                st.write(f"   🔑 API Key configurée: {'✅' if config.CAPTELY_API_KEY else '❌'}")
+
+                if not config.CAPTELY_API_KEY:
+                    st.error("❌ CAPTELY_API_KEY non configuré!")
+                    update_step_state(6, status=StepStatus.FAILED)
+                    return False
+
+                # Appel direct à Captely avec debug
+                client = CaptelyClient()
+
+                # Préparer les contacts
+                contacts_to_enrich = []
+                for dm in all_decision_makers:
+                    first_name = dm.get("firstName") or ""
+                    last_name = dm.get("lastName") or ""
+
+                    if not first_name or not last_name:
+                        full_name = dm.get("name", "")
+                        parts = full_name.split(" ", 1)
+                        first_name = parts[0] if parts else ""
+                        last_name = parts[1] if len(parts) > 1 else ""
+
+                    company = dm.get("entreprise", dm.get("company", ""))
+
+                    if first_name and last_name and company:
+                        contacts_to_enrich.append({
+                            "first_name": first_name,
+                            "last_name": last_name,
+                            "company": company,
+                            "linkedin_url": dm.get("linkedin_url", ""),
+                        })
+
+                st.write(f"   ✓ {len(contacts_to_enrich)} contacts valides préparés")
+
+                if contacts_to_enrich:
+                    st.write(f"   📝 Exemple: {contacts_to_enrich[0]}")
+
+                    # Test avec UN seul contact d'abord
+                    st.write("   🔄 Test enrichissement premier contact...")
+                    test_contact = contacts_to_enrich[0]
+
+                    result = client.enrich_contact(
+                        first_name=test_contact["first_name"],
+                        last_name=test_contact["last_name"],
+                        company=test_contact["company"],
+                        linkedin_url=test_contact.get("linkedin_url", ""),
+                        enrich_email=True,
+                        enrich_phone=True
+                    )
+
+                    st.write(f"   📨 Résultat API: {result}")
+
+                    if result.get("email"):
+                        st.write(f"   ✅ Email trouvé: {result.get('email')}")
+                    else:
+                        st.write("   ⚠️ Pas d'email trouvé pour ce contact")
+
+                # Maintenant enrichir tous les contacts
                 enriched = run_step_6_enrich_contacts(all_decision_makers)
                 st.session_state.enriched_contacts = enriched
                 with_email = len([c for c in enriched if c.get("email")])
                 update_step_state(6, status=StepStatus.COMPLETED, result_count=with_email)
                 st.success(f"✅ Étape 6: {with_email}/{len(enriched)} avec email")
+
             except Exception as e:
+                import traceback
                 st.error(f"❌ Étape 6 ERREUR: {str(e)}")
+                st.code(traceback.format_exc())
                 update_step_state(6, status=StepStatus.FAILED, error_message=str(e))
                 return False
 
