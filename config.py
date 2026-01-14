@@ -35,6 +35,7 @@ PHANTOMBUSTER_API_KEY = get_secret("PHANTOMBUSTER_API_KEY")
 ENRICH_CRM_API_KEY = get_secret("ENRICH_CRM_API_KEY")
 CAPTELY_API_KEY = get_secret("CAPTELY_API_KEY")
 CLAUDE_API_KEY = get_secret("CLAUDE_API_KEY")
+EMELIA_API_KEY = get_secret("EMELIA_API_KEY")
 
 # ============================================
 # API ENDPOINTS
@@ -51,6 +52,23 @@ CLAUDE_BASE_URL = "https://api.anthropic.com/v1"
 # ============================================
 
 PHANTOMBUSTER_AGENT_ID = get_secret("PHANTOMBUSTER_AGENT_ID")
+
+# ============================================
+# EMELIA CONFIG
+# ============================================
+
+EMELIA_CAMPAIGN_ID = get_secret("EMELIA_CAMPAIGN_ID")
+
+# ============================================
+# GOOGLE SHEETS CONFIG
+# ============================================
+
+# JSON string des credentials Service Account
+# Peut être le contenu du fichier JSON téléchargé depuis Google Cloud Console
+GOOGLE_SHEETS_CREDENTIALS = get_secret("GOOGLE_SHEETS_CREDENTIALS")
+
+# ID du spreadsheet (visible dans l'URL: docs.google.com/spreadsheets/d/{ID}/edit)
+GOOGLE_SHEETS_SPREADSHEET_ID = get_secret("GOOGLE_SHEETS_SPREADSHEET_ID")
 
 # ============================================
 # FILTRES PAPPERS

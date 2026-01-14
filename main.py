@@ -1,14 +1,16 @@
 """
 Orchestrateur principal du workflow d'enrichissement B2B
 
-Pipeline:
+Pipeline complet:
 1. Pappers → Récupérer entreprises ciblées
 2. Enrich CRM → Trouver URLs LinkedIn entreprises
 3. CSV → Sauvegarder les entreprises
 4. Phantombuster → Extraire employés LinkedIn
 5. Claude → Filtrer les décideurs (2-3 par entreprise)
 6. Captely → Enrichir avec emails et téléphones
-7. CSV → Exporter les contacts enrichis (prêt pour Emilia)
+7. CSV → Exporter les contacts enrichis
+8. Google Sheets → Synchroniser entreprises et contacts
+9. Emelia → Envoyer vers campagne LinkedIn/Email
 """
 import argparse
 import time
@@ -25,6 +27,11 @@ from services.csv_export import (
     export_enriched_contacts,
     read_companies_csv,
 )
+from services.google_sheets import (
+    sync_companies_to_sheets,
+    sync_contacts_to_sheets,
+)
+from services.emelia import send_contacts_to_emelia
 
 
 def run_step_1_pappers(max_companies: int = None) -> list:
@@ -131,13 +138,79 @@ def run_step_6_enrich_contacts(decision_makers: list) -> list:
 def run_step_7_export(contacts: list) -> str:
     """Étape 7: Exporter les contacts enrichis"""
     print("\n" + "=" * 60)
-    print("ÉTAPE 7: Export final (CSV pour Emilia)")
+    print("ÉTAPE 7: Export final (CSV)")
     print("=" * 60)
 
     filepath = export_enriched_contacts(contacts)
-    print(f"✓ Fichier prêt pour import Emilia: {filepath}")
+    print(f"✓ Fichier exporté: {filepath}")
 
     return filepath
+
+
+def run_step_8_google_sheets(companies: list, contacts: list) -> dict:
+    """Étape 8: Synchroniser vers Google Sheets"""
+    print("\n" + "=" * 60)
+    print("ÉTAPE 8: Synchronisation Google Sheets")
+    print("=" * 60)
+
+    results = {"companies": 0, "contacts": 0}
+
+    if not config.GOOGLE_SHEETS_SPREADSHEET_ID:
+        print("⚠ GOOGLE_SHEETS_SPREADSHEET_ID non configuré - étape sautée")
+        return results
+
+    if not config.GOOGLE_SHEETS_CREDENTIALS:
+        print("⚠ GOOGLE_SHEETS_CREDENTIALS non configuré - étape sautée")
+        return results
+
+    try:
+        # Sync entreprises
+        if companies:
+            results["companies"] = sync_companies_to_sheets(companies)
+
+        # Sync contacts
+        if contacts:
+            results["contacts"] = sync_contacts_to_sheets(contacts)
+
+        print(f"\n✓ {results['companies']} entreprises synchronisées")
+        print(f"✓ {results['contacts']} contacts synchronisés")
+
+    except Exception as e:
+        print(f"❌ Erreur Google Sheets: {e}")
+
+    return results
+
+
+def run_step_9_emelia(contacts: list) -> dict:
+    """Étape 9: Envoyer vers campagne Emelia"""
+    print("\n" + "=" * 60)
+    print("ÉTAPE 9: Envoi vers campagne Emelia")
+    print("=" * 60)
+
+    if not config.EMELIA_API_KEY:
+        print("⚠ EMELIA_API_KEY non configuré - étape sautée")
+        return {"success": 0, "failed": 0}
+
+    if not config.EMELIA_CAMPAIGN_ID:
+        print("⚠ EMELIA_CAMPAIGN_ID non configuré - étape sautée")
+        return {"success": 0, "failed": 0}
+
+    # Filtrer les contacts avec email (requis pour Emelia)
+    contacts_with_email = [c for c in contacts if c.get("email")]
+
+    if not contacts_with_email:
+        print("⚠ Aucun contact avec email - rien à envoyer")
+        return {"success": 0, "failed": 0}
+
+    print(f"📧 {len(contacts_with_email)} contacts avec email à envoyer")
+
+    results = send_contacts_to_emelia(contacts_with_email)
+
+    print(f"\n✓ {results.get('success', 0)} contacts envoyés vers Emelia")
+    if results.get('failed', 0) > 0:
+        print(f"⚠ {results.get('failed', 0)} échecs")
+
+    return results
 
 
 def run_full_pipeline(max_companies: int = None, skip_phantombuster: bool = False):
@@ -193,8 +266,14 @@ def run_full_pipeline(max_companies: int = None, skip_phantombuster: bool = Fals
     # Étape 6: Enrichissement Captely
     enriched_contacts = run_step_6_enrich_contacts(all_decision_makers)
 
-    # Étape 7: Export final
+    # Étape 7: Export final CSV
     output_file = run_step_7_export(enriched_contacts)
+
+    # Étape 8: Google Sheets (optionnel)
+    sheets_results = run_step_8_google_sheets(companies, enriched_contacts)
+
+    # Étape 9: Emelia (optionnel)
+    emelia_results = run_step_9_emelia(enriched_contacts)
 
     # Résumé
     end_time = datetime.now()
@@ -207,6 +286,8 @@ def run_full_pipeline(max_companies: int = None, skip_phantombuster: bool = Fals
     print(f"Décideurs identifiés: {len(all_decision_makers)}")
     print(f"Contacts enrichis: {len(enriched_contacts)}")
     print(f"Fichier output: {output_file}")
+    print(f"Google Sheets: {sheets_results.get('contacts', 0)} contacts sync")
+    print(f"Emelia: {emelia_results.get('success', 0)} contacts envoyés")
     print(f"Durée totale: {duration}")
     print("#" * 60)
 

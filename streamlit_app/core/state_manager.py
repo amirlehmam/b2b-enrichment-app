@@ -24,7 +24,9 @@ STEP_NAMES = {
     4: ("Phantombuster", "Extraction employes"),
     5: ("Claude AI", "Filtrage decideurs"),
     6: ("Captely", "Enrichissement contacts"),
-    7: ("Export Final", "CSV pour Emilia"),
+    7: ("Export", "CSV final"),
+    8: ("Sheets", "Google Sheets sync"),
+    9: ("Emelia", "Campagne LinkedIn"),
 }
 
 
@@ -68,7 +70,7 @@ def create_initial_steps() -> Dict[int, dict]:
             "error_message": None,
             "logs": []
         }
-        for i in range(1, 8)
+        for i in range(1, 10)  # 9 steps now
     }
 
 

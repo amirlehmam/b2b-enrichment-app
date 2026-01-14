@@ -48,6 +48,8 @@ def run_pipeline_with_logs(max_companies, skip_phantombuster):
         run_step_5_filter_decision_makers,
         run_step_6_enrich_contacts,
         run_step_7_export,
+        run_step_8_google_sheets,
+        run_step_9_emelia,
     )
 
     reset_pipeline_state()
@@ -57,7 +59,7 @@ def run_pipeline_with_logs(max_companies, skip_phantombuster):
         st.subheader("📋 Logs d'exécution")
 
         # STEP 1
-        with st.spinner("Étape 1/7: Recherche Pappers..."):
+        with st.spinner("Étape 1/9: Recherche Pappers..."):
             st.write("🔄 **Étape 1:** Appel API Pappers...")
             try:
                 companies = run_step_1_pappers(max_companies)
@@ -74,7 +76,7 @@ def run_pipeline_with_logs(max_companies, skip_phantombuster):
             return False
 
         # STEP 2
-        with st.spinner("Étape 2/7: LinkedIn URLs..."):
+        with st.spinner("Étape 2/9: LinkedIn URLs..."):
             st.write("🔄 **Étape 2:** Enrichissement LinkedIn...")
             try:
                 companies = run_step_2_linkedin(companies)
@@ -88,7 +90,7 @@ def run_pipeline_with_logs(max_companies, skip_phantombuster):
                 return False
 
         # STEP 3
-        with st.spinner("Étape 3/7: Sauvegarde CSV..."):
+        with st.spinner("Étape 3/9: Sauvegarde CSV..."):
             st.write("🔄 **Étape 3:** Sauvegarde fichier...")
             try:
                 filepath = run_step_3_save_companies(companies)
@@ -121,7 +123,7 @@ def run_pipeline_with_logs(max_companies, skip_phantombuster):
             # STEP 4 - Phantombuster (Optimized - Parallel Processing)
             st.info("🚀 **Étape 4:** Phantombuster - Mode parallèle activé (3 entreprises en simultané)")
 
-            with st.spinner("Étape 4/7: Extraction LinkedIn (parallèle)..."):
+            with st.spinner("Étape 4/9: Extraction LinkedIn (parallèle)..."):
                 st.write("🔄 **Étape 4:** Lancement extraction LinkedIn...")
                 update_step_state(4, status=StepStatus.RUNNING)
 
@@ -167,7 +169,7 @@ def run_pipeline_with_logs(max_companies, skip_phantombuster):
                     return False
 
             # STEP 5 - Claude Filter
-            with st.spinner("Étape 5/7: Filtrage Claude AI..."):
+            with st.spinner("Étape 5/9: Filtrage Claude AI..."):
                 st.write("🔄 **Étape 5:** Filtrage décideurs avec Claude...")
                 try:
                     company_employees = st.session_state.get("company_employees", {})
@@ -187,7 +189,7 @@ def run_pipeline_with_logs(max_companies, skip_phantombuster):
             return False
 
         # STEP 6 - Captely
-        with st.spinner("Étape 6/7: Enrichissement Captely..."):
+        with st.spinner("Étape 6/9: Enrichissement Captely..."):
             st.write("🔄 **Étape 6:** Enrichissement emails/téléphones...")
             try:
                 enriched = run_step_6_enrich_contacts(all_decision_makers)
@@ -201,7 +203,7 @@ def run_pipeline_with_logs(max_companies, skip_phantombuster):
                 return False
 
         # STEP 7 - Export
-        with st.spinner("Étape 7/7: Export final..."):
+        with st.spinner("Étape 7/9: Export final..."):
             st.write("🔄 **Étape 7:** Export CSV final...")
             try:
                 filepath = run_step_7_export(enriched)
@@ -210,6 +212,38 @@ def run_pipeline_with_logs(max_companies, skip_phantombuster):
             except Exception as e:
                 st.error(f"❌ Étape 7 ERREUR: {str(e)}")
                 update_step_state(7, status=StepStatus.FAILED, error_message=str(e))
+
+        # STEP 8 - Google Sheets
+        with st.spinner("Étape 8/9: Google Sheets..."):
+            st.write("🔄 **Étape 8:** Synchronisation Google Sheets...")
+            try:
+                import config
+                if config.GOOGLE_SHEETS_SPREADSHEET_ID and config.GOOGLE_SHEETS_CREDENTIALS:
+                    sheets_result = run_step_8_google_sheets(companies, enriched)
+                    update_step_state(8, status=StepStatus.COMPLETED, result_count=sheets_result.get("contacts", 0))
+                    st.success(f"✅ Étape 8: {sheets_result.get('contacts', 0)} contacts sync")
+                else:
+                    st.info("⏭️ Google Sheets non configuré - étape sautée")
+                    update_step_state(8, status=StepStatus.SKIPPED)
+            except Exception as e:
+                st.warning(f"⚠️ Étape 8: {str(e)}")
+                update_step_state(8, status=StepStatus.SKIPPED)
+
+        # STEP 9 - Emelia
+        with st.spinner("Étape 9/9: Envoi Emelia..."):
+            st.write("🔄 **Étape 9:** Envoi vers campagne Emelia...")
+            try:
+                import config
+                if config.EMELIA_API_KEY and config.EMELIA_CAMPAIGN_ID:
+                    emelia_result = run_step_9_emelia(enriched)
+                    update_step_state(9, status=StepStatus.COMPLETED, result_count=emelia_result.get("success", 0))
+                    st.success(f"✅ Étape 9: {emelia_result.get('success', 0)} contacts envoyés")
+                else:
+                    st.info("⏭️ Emelia non configuré - étape sautée")
+                    update_step_state(9, status=StepStatus.SKIPPED)
+            except Exception as e:
+                st.warning(f"⚠️ Étape 9: {str(e)}")
+                update_step_state(9, status=StepStatus.SKIPPED)
 
         st.balloons()
         st.success("🎉 **Pipeline terminé avec succès!**")
@@ -229,6 +263,8 @@ def get_api_config():
             "Enrich CRM": bool(config.ENRICH_CRM_API_KEY),
             "Captely": bool(config.CAPTELY_API_KEY),
             "Claude AI": bool(config.CLAUDE_API_KEY),
+            "Google Sheets": bool(config.GOOGLE_SHEETS_CREDENTIALS and config.GOOGLE_SHEETS_SPREADSHEET_ID),
+            "Emelia": bool(config.EMELIA_API_KEY and config.EMELIA_CAMPAIGN_ID),
         }
     except:
         return {}
@@ -273,8 +309,8 @@ st.title("🎯 B2B Lead Enrichment")
 
 # Progress cards
 st.subheader("📊 Progression")
-cols = st.columns(7)
-for i, step in enumerate(range(1, 8)):
+cols = st.columns(9)
+for i, step in enumerate(range(1, 10)):
     with cols[i]:
         state = get_step_state(step)
         status = get_step_status(step)
