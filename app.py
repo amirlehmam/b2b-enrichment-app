@@ -320,8 +320,12 @@ def run_pipeline_with_logs(max_companies, skip_phantombuster):
 
                     st.write(f"   📨 Résultat API: {result}")
 
-                    if result.get("email"):
+                    if result.get("error"):
+                        st.error(f"   ❌ ERREUR API: {result.get('error')}")
+                    elif result.get("email"):
                         st.write(f"   ✅ Email trouvé: {result.get('email')}")
+                    elif not result:
+                        st.warning("   ⚠️ API a retourné une réponse vide")
                     else:
                         st.write("   ⚠️ Pas d'email trouvé pour ce contact")
 

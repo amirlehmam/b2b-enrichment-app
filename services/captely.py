@@ -52,18 +52,29 @@ class CaptelyClient:
             payload["linkedin_url"] = linkedin_url
 
         try:
+            url = f"{self.base_url}/enrich"
+            print(f"[CAPTELY DEBUG] POST {url}")
+            print(f"[CAPTELY DEBUG] Payload: {payload}")
+            print(f"[CAPTELY DEBUG] API Key: {self.api_key[:20]}...")
+
             response = requests.post(
-                f"{self.base_url}/enrich",
+                url,
                 headers=self._headers(),
                 json=payload,
                 timeout=35
             )
+
+            print(f"[CAPTELY DEBUG] Status: {response.status_code}")
+            print(f"[CAPTELY DEBUG] Response: {response.text[:500]}")
+
             response.raise_for_status()
             return response.json()
 
         except requests.exceptions.RequestException as e:
-            print(f"Erreur enrichissement Captely: {e}")
-            return {}
+            print(f"[CAPTELY ERROR] {e}")
+            if hasattr(e, 'response') and e.response is not None:
+                print(f"[CAPTELY ERROR] Response: {e.response.text[:500]}")
+            return {"error": str(e)}
 
     def enrich_bulk(
         self,
