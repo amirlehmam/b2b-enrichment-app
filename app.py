@@ -3,6 +3,8 @@ B2B Lead Enrichment Workflow - Streamlit UI
 """
 import sys
 import os
+from enum import Enum
+from datetime import datetime
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 if ROOT not in sys.path:
@@ -16,20 +18,94 @@ st.set_page_config(
     layout="wide",
 )
 
-from streamlit_app.core.state_manager import (
-    initialize_session_state,
-    reset_pipeline_state,
-    STEP_NAMES,
-    get_step_state,
-    get_step_status,
-    get_completed_steps_count,
-    StepStatus,
-    STATUS_ICONS,
-    STATUS_COLORS,
-    update_step_state,
-)
-
 import pandas as pd
+
+# ============================================
+# STATE MANAGEMENT (inlined to avoid import issues)
+# ============================================
+
+class StepStatus(Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
+STEP_NAMES = {
+    1: ("Pappers", "Recherche entreprises"),
+    2: ("Enrich CRM", "URLs LinkedIn"),
+    3: ("Export CSV", "Sauvegarde entreprises"),
+    4: ("Phantombuster", "Extraction employes"),
+    5: ("Claude AI", "Filtrage decideurs"),
+    6: ("Captely", "Enrichissement contacts"),
+    7: ("Export", "CSV final"),
+    8: ("Sheets", "Google Sheets sync"),
+    9: ("Emelia", "Campagne LinkedIn"),
+}
+
+STATUS_ICONS = {
+    StepStatus.PENDING: "⏳",
+    StepStatus.RUNNING: "🔄",
+    StepStatus.COMPLETED: "✅",
+    StepStatus.FAILED: "❌",
+    StepStatus.SKIPPED: "⏭️",
+}
+
+STATUS_COLORS = {
+    StepStatus.PENDING: "#6c757d",
+    StepStatus.RUNNING: "#0d6efd",
+    StepStatus.COMPLETED: "#198754",
+    StepStatus.FAILED: "#dc3545",
+    StepStatus.SKIPPED: "#ffc107",
+}
+
+def create_initial_steps():
+    return {
+        i: {
+            "status": StepStatus.PENDING.value,
+            "result_count": 0,
+            "error_message": None,
+        }
+        for i in range(1, 10)
+    }
+
+def initialize_session_state():
+    defaults = {
+        "max_companies": 10,
+        "skip_phantombuster": True,
+        "steps": create_initial_steps(),
+        "companies": [],
+        "company_employees": {},
+        "decision_makers": [],
+        "enriched_contacts": [],
+    }
+    for key, default_value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = default_value
+
+def reset_pipeline_state():
+    st.session_state.steps = create_initial_steps()
+    st.session_state.companies = []
+    st.session_state.company_employees = {}
+    st.session_state.decision_makers = []
+    st.session_state.enriched_contacts = []
+
+def get_step_state(step):
+    return st.session_state.steps.get(step, {})
+
+def get_step_status(step):
+    step_data = get_step_state(step)
+    status_value = step_data.get("status", StepStatus.PENDING.value)
+    return StepStatus(status_value)
+
+def update_step_state(step, **kwargs):
+    if step not in st.session_state.steps:
+        st.session_state.steps[step] = {"status": StepStatus.PENDING.value, "result_count": 0}
+    for key, value in kwargs.items():
+        if key == "status" and isinstance(value, StepStatus):
+            st.session_state.steps[step][key] = value.value
+        else:
+            st.session_state.steps[step][key] = value
 
 initialize_session_state()
 
@@ -120,41 +196,32 @@ def run_pipeline_with_logs(max_companies, skip_phantombuster):
             update_step_state(5, status=StepStatus.COMPLETED, result_count=len(all_decision_makers))
             st.success(f"✅ Étape 5: {len(all_decision_makers)} dirigeants extraits")
         else:
-            # STEP 4 - Phantombuster (Optimized - Parallel Processing)
-            st.info("🚀 **Étape 4:** Phantombuster - Mode parallèle activé (3 entreprises en simultané)")
+            # STEP 4 - Phantombuster
+            st.info("🚀 **Étape 4:** Phantombuster - Mode parallèle activé")
 
             with st.spinner("Étape 4/9: Extraction LinkedIn (parallèle)..."):
                 st.write("🔄 **Étape 4:** Lancement extraction LinkedIn...")
                 update_step_state(4, status=StepStatus.RUNNING)
 
                 try:
-                    # Check if Phantombuster is properly configured
                     import config
                     if not config.PHANTOMBUSTER_API_KEY:
                         st.error("❌ PHANTOMBUSTER_API_KEY non configuré!")
-                        update_step_state(4, status=StepStatus.FAILED, error_message="API key missing")
+                        update_step_state(4, status=StepStatus.FAILED)
                         return False
                     if not config.PHANTOMBUSTER_AGENT_ID:
                         st.error("❌ PHANTOMBUSTER_AGENT_ID non configuré!")
-                        st.info("💡 L'Agent ID se trouve dans l'URL de votre agent Phantombuster: phantombuster.com/agents/XXXXX")
-                        update_step_state(4, status=StepStatus.FAILED, error_message="Agent ID missing")
+                        update_step_state(4, status=StepStatus.FAILED)
                         return False
 
-                    st.write(f"   ✓ API Key configurée")
-                    st.write(f"   ✓ Agent ID: {config.PHANTOMBUSTER_AGENT_ID[:8]}...")
-
-                    # Show which companies we're processing
                     companies_with_linkedin = [c for c in companies if c.get("linkedin_url")]
-                    st.write(f"   → {len(companies_with_linkedin)} entreprises avec LinkedIn à traiter")
+                    st.write(f"   → {len(companies_with_linkedin)} entreprises avec LinkedIn")
 
                     if not companies_with_linkedin:
-                        st.warning("⚠️ Aucune entreprise avec URL LinkedIn - saut de Phantombuster")
+                        st.warning("⚠️ Aucune entreprise avec URL LinkedIn")
                         update_step_state(4, status=StepStatus.SKIPPED)
                         company_employees = {}
                     else:
-                        for i, company in enumerate(companies_with_linkedin):
-                            st.write(f"   📍 [{i+1}/{len(companies_with_linkedin)}] {company['nom']}: {company['linkedin_url']}")
-
                         company_employees = run_step_4_phantombuster(companies)
 
                     st.session_state.company_employees = company_employees
@@ -162,9 +229,6 @@ def run_pipeline_with_logs(max_companies, skip_phantombuster):
                     st.success(f"✅ Étape 4: {len(company_employees)} entreprises traitées")
                 except Exception as e:
                     st.error(f"❌ Étape 4 ERREUR: {str(e)}")
-                    st.error(f"   Détail: {type(e).__name__}")
-                    import traceback
-                    st.code(traceback.format_exc(), language="python")
                     update_step_state(4, status=StepStatus.FAILED, error_message=str(e))
                     return False
 
@@ -290,7 +354,7 @@ skip_phantombuster = st.sidebar.checkbox(
 st.session_state.skip_phantombuster = skip_phantombuster
 
 if not skip_phantombuster:
-    st.sidebar.warning("⚠️ Phantombuster = 2-5 min/entreprise!")
+    st.sidebar.warning("⚠️ Phantombuster = lent!")
 
 st.sidebar.divider()
 
@@ -307,23 +371,26 @@ for api, ok in get_api_config().items():
 
 st.title("🎯 B2B Lead Enrichment")
 
-# Progress cards
+# Progress cards - 9 steps in 2 rows
 st.subheader("📊 Progression")
-cols = st.columns(9)
+row1 = st.columns(5)
+row2 = st.columns(4)
+all_cols = row1 + row2
+
 for i, step in enumerate(range(1, 10)):
-    with cols[i]:
+    with all_cols[i]:
         state = get_step_state(step)
         status = get_step_status(step)
         icon = STATUS_ICONS.get(status, "⏳")
         color = STATUS_COLORS.get(status, "#6c757d")
-        name = STEP_NAMES[step][0][:8]
+        name = STEP_NAMES[step][0][:6]
         count = state.get("result_count", 0)
 
         st.markdown(f"""
-        <div style="border:2px solid {color};border-radius:6px;padding:6px;text-align:center;background:{color}15;">
-            <div style="font-size:1.5em;">{icon}</div>
-            <div style="font-size:0.7em;"><b>{step}</b></div>
-            <div style="font-size:0.6em;color:#666;">{count}</div>
+        <div style="border:2px solid {color};border-radius:6px;padding:4px;text-align:center;background:{color}15;">
+            <div style="font-size:1.2em;">{icon}</div>
+            <div style="font-size:0.65em;"><b>{name}</b></div>
+            <div style="font-size:0.55em;color:#666;">{count}</div>
         </div>
         """, unsafe_allow_html=True)
 
