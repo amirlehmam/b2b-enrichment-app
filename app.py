@@ -118,10 +118,10 @@ def run_pipeline_with_logs(max_companies, skip_phantombuster):
             update_step_state(5, status=StepStatus.COMPLETED, result_count=len(all_decision_makers))
             st.success(f"✅ Étape 5: {len(all_decision_makers)} dirigeants extraits")
         else:
-            # STEP 4 - Phantombuster (LONG!)
-            st.warning("⚠️ **Étape 4:** Phantombuster - Cette étape peut prendre 2-5 min par entreprise!")
+            # STEP 4 - Phantombuster (Optimized - Parallel Processing)
+            st.info("🚀 **Étape 4:** Phantombuster - Mode parallèle activé (3 entreprises en simultané)")
 
-            with st.spinner("Étape 4/7: Phantombuster (peut être long)..."):
+            with st.spinner("Étape 4/7: Extraction LinkedIn (parallèle)..."):
                 st.write("🔄 **Étape 4:** Lancement extraction LinkedIn...")
                 update_step_state(4, status=StepStatus.RUNNING)
 

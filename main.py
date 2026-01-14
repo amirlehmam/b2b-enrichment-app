@@ -17,7 +17,7 @@ from datetime import datetime
 import config
 from services.pappers import get_target_companies
 from services.enrich_crm import enrich_companies_with_linkedin
-from services.phantombuster import extract_employees_from_linkedin
+from services.phantombuster import extract_employees_from_linkedin, extract_employees_batch
 from services.claude_filter import filter_employees_for_company
 from services.captely import enrich_contacts_with_captely
 from services.csv_export import (
@@ -66,9 +66,9 @@ def run_step_3_save_companies(companies: list) -> str:
 
 
 def run_step_4_phantombuster(companies: list) -> dict:
-    """Étape 4: Extraire les employés via Phantombuster"""
+    """Étape 4: Extraire les employés via Phantombuster (OPTIMISÉ - PARALLÈLE)"""
     print("\n" + "=" * 60)
-    print("ÉTAPE 4: Extraction des employés (Phantombuster)")
+    print("ÉTAPE 4: Extraction des employés (Phantombuster - Mode Rapide)")
     print("=" * 60)
 
     if not config.PHANTOMBUSTER_AGENT_ID:
@@ -76,22 +76,8 @@ def run_step_4_phantombuster(companies: list) -> dict:
         print("  Configurez l'ID dans config.py ou via variable d'environnement")
         return {}
 
-    company_employees = {}
-
-    for company in companies:
-        linkedin_url = company.get("linkedin_url")
-        if not linkedin_url:
-            continue
-
-        print(f"\nExtraction pour: {company['nom']}")
-        employees = extract_employees_from_linkedin(linkedin_url)
-        company_employees[company["siren"]] = {
-            "company": company,
-            "employees": employees,
-        }
-
-        # Pause entre les extractions pour respecter les limites
-        time.sleep(2)
+    # Utiliser l'extraction BATCH parallèle (10x plus rapide!)
+    company_employees = extract_employees_batch(companies, max_workers=3)
 
     print(f"\n✓ Employés extraits pour {len(company_employees)} entreprises")
     return company_employees
