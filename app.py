@@ -1,28 +1,21 @@
 """
 B2B Lead Enrichment Workflow - Streamlit UI
-Entry point for Streamlit Cloud deployment.
 """
 import sys
 import os
-import tempfile
-import time
 
-# Setup path
 ROOT = os.path.dirname(os.path.abspath(__file__))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 import streamlit as st
 
-# Page configuration - MUST be first Streamlit command
 st.set_page_config(
-    page_title="B2B Lead Enrichment Workflow",
+    page_title="B2B Lead Enrichment",
     page_icon="🎯",
     layout="wide",
-    initial_sidebar_state="expanded"
 )
 
-# Import components after set_page_config
 from streamlit_app.core.state_manager import (
     initialize_session_state,
     reset_pipeline_state,
@@ -34,23 +27,19 @@ from streamlit_app.core.state_manager import (
     STATUS_ICONS,
     STATUS_COLORS,
     update_step_state,
-    add_step_log,
 )
 
 import pandas as pd
-from datetime import datetime
 
-# Initialize session state
 initialize_session_state()
 
 # ============================================
-# PIPELINE EXECUTION WITH LIVE PROGRESS
+# PIPELINE WITH DETAILED LOGGING
 # ============================================
 
-def run_pipeline_with_progress(max_companies, skip_phantombuster):
-    """Run pipeline with live status updates."""
+def run_pipeline_with_logs(max_companies, skip_phantombuster):
+    """Run pipeline with detailed live logging."""
 
-    # Import here to avoid circular imports
     from main import (
         run_step_1_pappers,
         run_step_2_linkedin,
@@ -62,60 +51,59 @@ def run_pipeline_with_progress(max_companies, skip_phantombuster):
     )
 
     reset_pipeline_state()
+    log_container = st.container()
 
-    with st.status("🚀 Pipeline en cours d'exécution...", expanded=True) as status:
+    with log_container:
+        st.subheader("📋 Logs d'exécution")
 
-        # Step 1: Pappers
-        st.write("**Étape 1/7:** Recherche entreprises (Pappers)...")
-        update_step_state(1, status=StepStatus.RUNNING)
-        try:
-            companies = run_step_1_pappers(max_companies)
-            st.session_state.companies = companies or []
-            update_step_state(1, status=StepStatus.COMPLETED, result_count=len(companies or []))
-            st.write(f"✅ {len(companies or [])} entreprises trouvées")
-        except Exception as e:
-            update_step_state(1, status=StepStatus.FAILED, error_message=str(e))
-            st.error(f"❌ Erreur: {e}")
-            status.update(label="❌ Pipeline échoué", state="error")
-            return False
+        # STEP 1
+        with st.spinner("Étape 1/7: Recherche Pappers..."):
+            st.write("🔄 **Étape 1:** Appel API Pappers...")
+            try:
+                companies = run_step_1_pappers(max_companies)
+                st.session_state.companies = companies or []
+                update_step_state(1, status=StepStatus.COMPLETED, result_count=len(companies or []))
+                st.success(f"✅ Étape 1: {len(companies or [])} entreprises trouvées")
+            except Exception as e:
+                st.error(f"❌ Étape 1 ERREUR: {str(e)}")
+                update_step_state(1, status=StepStatus.FAILED, error_message=str(e))
+                return False
 
         if not companies:
-            status.update(label="⚠️ Aucune entreprise trouvée", state="error")
+            st.warning("⚠️ Aucune entreprise trouvée. Arrêt.")
             return False
 
-        # Step 2: LinkedIn URLs
-        st.write("**Étape 2/7:** Récupération URLs LinkedIn...")
-        update_step_state(2, status=StepStatus.RUNNING)
-        try:
-            companies = run_step_2_linkedin(companies)
-            st.session_state.companies = companies
-            with_linkedin = len([c for c in companies if c.get("linkedin_url")])
-            update_step_state(2, status=StepStatus.COMPLETED, result_count=with_linkedin)
-            st.write(f"✅ {with_linkedin}/{len(companies)} avec LinkedIn")
-        except Exception as e:
-            update_step_state(2, status=StepStatus.FAILED, error_message=str(e))
-            st.error(f"❌ Erreur: {e}")
-            status.update(label="❌ Pipeline échoué", state="error")
-            return False
+        # STEP 2
+        with st.spinner("Étape 2/7: LinkedIn URLs..."):
+            st.write("🔄 **Étape 2:** Enrichissement LinkedIn...")
+            try:
+                companies = run_step_2_linkedin(companies)
+                st.session_state.companies = companies
+                with_li = len([c for c in companies if c.get("linkedin_url")])
+                update_step_state(2, status=StepStatus.COMPLETED, result_count=with_li)
+                st.success(f"✅ Étape 2: {with_li}/{len(companies)} avec LinkedIn")
+            except Exception as e:
+                st.error(f"❌ Étape 2 ERREUR: {str(e)}")
+                update_step_state(2, status=StepStatus.FAILED, error_message=str(e))
+                return False
 
-        # Step 3: Save CSV
-        st.write("**Étape 3/7:** Sauvegarde CSV...")
-        update_step_state(3, status=StepStatus.RUNNING)
-        try:
-            filepath = run_step_3_save_companies(companies)
-            st.session_state.companies_csv_path = filepath
-            update_step_state(3, status=StepStatus.COMPLETED, result_count=len(companies))
-            st.write(f"✅ Sauvegardé: {filepath}")
-        except Exception as e:
-            update_step_state(3, status=StepStatus.FAILED, error_message=str(e))
-            st.error(f"❌ Erreur: {e}")
+        # STEP 3
+        with st.spinner("Étape 3/7: Sauvegarde CSV..."):
+            st.write("🔄 **Étape 3:** Sauvegarde fichier...")
+            try:
+                filepath = run_step_3_save_companies(companies)
+                update_step_state(3, status=StepStatus.COMPLETED, result_count=len(companies))
+                st.success(f"✅ Étape 3: Sauvegardé")
+            except Exception as e:
+                st.error(f"❌ Étape 3 ERREUR: {str(e)}")
+                update_step_state(3, status=StepStatus.FAILED, error_message=str(e))
 
-        # Steps 4-5: Phantombuster or Skip
+        # STEPS 4-5
         if skip_phantombuster:
-            st.write("**Étape 4/7:** ⏭️ Phantombuster sauté")
+            st.info("⏭️ **Étape 4:** Phantombuster sauté (option cochée)")
             update_step_state(4, status=StepStatus.SKIPPED)
 
-            st.write("**Étape 5/7:** Extraction dirigeants Pappers...")
+            st.write("🔄 **Étape 5:** Extraction dirigeants depuis Pappers...")
             all_decision_makers = []
             for company in companies:
                 for dirigeant in company.get("dirigeants", []):
@@ -128,159 +116,104 @@ def run_pipeline_with_progress(max_companies, skip_phantombuster):
                     })
             st.session_state.decision_makers = all_decision_makers
             update_step_state(5, status=StepStatus.COMPLETED, result_count=len(all_decision_makers))
-            st.write(f"✅ {len(all_decision_makers)} dirigeants extraits")
+            st.success(f"✅ Étape 5: {len(all_decision_makers)} dirigeants extraits")
         else:
-            # Step 4: Phantombuster
-            st.write("**Étape 4/7:** Extraction employés LinkedIn (Phantombuster)...")
-            update_step_state(4, status=StepStatus.RUNNING)
-            try:
-                company_employees = run_step_4_phantombuster(companies)
-                st.session_state.company_employees = company_employees
-                update_step_state(4, status=StepStatus.COMPLETED, result_count=len(company_employees))
-                st.write(f"✅ {len(company_employees)} entreprises traitées")
-            except Exception as e:
-                update_step_state(4, status=StepStatus.FAILED, error_message=str(e))
-                st.error(f"❌ Erreur: {e}")
-                status.update(label="❌ Pipeline échoué", state="error")
-                return False
+            # STEP 4 - Phantombuster (LONG!)
+            st.warning("⚠️ **Étape 4:** Phantombuster - Cette étape peut prendre 2-5 min par entreprise!")
 
-            # Step 5: Claude Filter
-            st.write("**Étape 5/7:** Filtrage décideurs (Claude AI)...")
-            update_step_state(5, status=StepStatus.RUNNING)
-            try:
-                all_decision_makers = run_step_5_filter_decision_makers(company_employees)
-                st.session_state.decision_makers = all_decision_makers
-                update_step_state(5, status=StepStatus.COMPLETED, result_count=len(all_decision_makers))
-                st.write(f"✅ {len(all_decision_makers)} décideurs identifiés")
-            except Exception as e:
-                update_step_state(5, status=StepStatus.FAILED, error_message=str(e))
-                st.error(f"❌ Erreur: {e}")
-                status.update(label="❌ Pipeline échoué", state="error")
-                return False
+            with st.spinner("Étape 4/7: Phantombuster (peut être long)..."):
+                st.write("🔄 **Étape 4:** Lancement extraction LinkedIn...")
+                update_step_state(4, status=StepStatus.RUNNING)
 
-        all_decision_makers = st.session_state.decision_makers
+                try:
+                    # Check if Phantombuster is properly configured
+                    import config
+                    if not config.PHANTOMBUSTER_API_KEY:
+                        st.error("❌ PHANTOMBUSTER_API_KEY non configuré!")
+                        update_step_state(4, status=StepStatus.FAILED, error_message="API key missing")
+                        return False
+                    if not config.PHANTOMBUSTER_AGENT_ID:
+                        st.error("❌ PHANTOMBUSTER_AGENT_ID non configuré!")
+                        st.info("💡 L'Agent ID se trouve dans l'URL de votre agent Phantombuster: phantombuster.com/agents/XXXXX")
+                        update_step_state(4, status=StepStatus.FAILED, error_message="Agent ID missing")
+                        return False
+
+                    st.write(f"   ✓ API Key configurée")
+                    st.write(f"   ✓ Agent ID: {config.PHANTOMBUSTER_AGENT_ID[:8]}...")
+
+                    # Show which companies we're processing
+                    companies_with_linkedin = [c for c in companies if c.get("linkedin_url")]
+                    st.write(f"   → {len(companies_with_linkedin)} entreprises avec LinkedIn à traiter")
+
+                    if not companies_with_linkedin:
+                        st.warning("⚠️ Aucune entreprise avec URL LinkedIn - saut de Phantombuster")
+                        update_step_state(4, status=StepStatus.SKIPPED)
+                        company_employees = {}
+                    else:
+                        for i, company in enumerate(companies_with_linkedin):
+                            st.write(f"   📍 [{i+1}/{len(companies_with_linkedin)}] {company['nom']}: {company['linkedin_url']}")
+
+                        company_employees = run_step_4_phantombuster(companies)
+
+                    st.session_state.company_employees = company_employees
+                    update_step_state(4, status=StepStatus.COMPLETED, result_count=len(company_employees))
+                    st.success(f"✅ Étape 4: {len(company_employees)} entreprises traitées")
+                except Exception as e:
+                    st.error(f"❌ Étape 4 ERREUR: {str(e)}")
+                    st.error(f"   Détail: {type(e).__name__}")
+                    import traceback
+                    st.code(traceback.format_exc(), language="python")
+                    update_step_state(4, status=StepStatus.FAILED, error_message=str(e))
+                    return False
+
+            # STEP 5 - Claude Filter
+            with st.spinner("Étape 5/7: Filtrage Claude AI..."):
+                st.write("🔄 **Étape 5:** Filtrage décideurs avec Claude...")
+                try:
+                    company_employees = st.session_state.get("company_employees", {})
+                    all_decision_makers = run_step_5_filter_decision_makers(company_employees)
+                    st.session_state.decision_makers = all_decision_makers
+                    update_step_state(5, status=StepStatus.COMPLETED, result_count=len(all_decision_makers))
+                    st.success(f"✅ Étape 5: {len(all_decision_makers)} décideurs identifiés")
+                except Exception as e:
+                    st.error(f"❌ Étape 5 ERREUR: {str(e)}")
+                    update_step_state(5, status=StepStatus.FAILED, error_message=str(e))
+                    return False
+
+        all_decision_makers = st.session_state.get("decision_makers", [])
 
         if not all_decision_makers:
-            status.update(label="⚠️ Aucun décideur trouvé", state="error")
+            st.warning("⚠️ Aucun décideur trouvé. Arrêt.")
             return False
 
-        # Step 6: Captely
-        st.write("**Étape 6/7:** Enrichissement contacts (Captely)...")
-        update_step_state(6, status=StepStatus.RUNNING)
-        try:
-            enriched = run_step_6_enrich_contacts(all_decision_makers)
-            st.session_state.enriched_contacts = enriched
-            with_email = len([c for c in enriched if c.get("email")])
-            update_step_state(6, status=StepStatus.COMPLETED, result_count=with_email)
-            st.write(f"✅ {with_email}/{len(enriched)} avec email")
-        except Exception as e:
-            update_step_state(6, status=StepStatus.FAILED, error_message=str(e))
-            st.error(f"❌ Erreur: {e}")
-            status.update(label="❌ Pipeline échoué", state="error")
-            return False
-
-        # Step 7: Export
-        st.write("**Étape 7/7:** Export final CSV...")
-        update_step_state(7, status=StepStatus.RUNNING)
-        try:
-            filepath = run_step_7_export(enriched)
-            st.session_state.contacts_csv_path = filepath
-            update_step_state(7, status=StepStatus.COMPLETED, result_count=len(enriched))
-            st.write(f"✅ Export: {filepath}")
-        except Exception as e:
-            update_step_state(7, status=StepStatus.FAILED, error_message=str(e))
-            st.error(f"❌ Erreur: {e}")
-
-        status.update(label="✅ Pipeline terminé avec succès!", state="complete")
-        return True
-
-
-def run_single_step_with_progress(step, max_companies):
-    """Run a single step with progress."""
-    from main import (
-        run_step_1_pappers,
-        run_step_2_linkedin,
-        run_step_3_save_companies,
-        run_step_4_phantombuster,
-        run_step_5_filter_decision_makers,
-        run_step_6_enrich_contacts,
-        run_step_7_export,
-    )
-
-    with st.status(f"🔄 Exécution étape {step}...", expanded=True) as status:
-        try:
-            if step == 1:
-                companies = run_step_1_pappers(max_companies)
-                st.session_state.companies = companies or []
-                update_step_state(1, status=StepStatus.COMPLETED, result_count=len(companies or []))
-                st.write(f"✅ {len(companies or [])} entreprises")
-
-            elif step == 2:
-                companies = st.session_state.get("companies", [])
-                if not companies:
-                    st.error("❌ Pas de données. Exécutez l'étape 1 d'abord.")
-                    return False
-                enriched = run_step_2_linkedin(companies)
-                st.session_state.companies = enriched
-                update_step_state(2, status=StepStatus.COMPLETED, result_count=len(enriched))
-                st.write(f"✅ {len(enriched)} entreprises enrichies")
-
-            elif step == 3:
-                companies = st.session_state.get("companies", [])
-                if not companies:
-                    st.error("❌ Pas de données.")
-                    return False
-                filepath = run_step_3_save_companies(companies)
-                update_step_state(3, status=StepStatus.COMPLETED, result_count=len(companies))
-                st.write(f"✅ Sauvegardé")
-
-            elif step == 4:
-                companies = st.session_state.get("companies", [])
-                if not companies:
-                    st.error("❌ Pas de données.")
-                    return False
-                company_employees = run_step_4_phantombuster(companies)
-                st.session_state.company_employees = company_employees
-                update_step_state(4, status=StepStatus.COMPLETED, result_count=len(company_employees))
-                st.write(f"✅ {len(company_employees)} entreprises traitées")
-
-            elif step == 5:
-                company_employees = st.session_state.get("company_employees", {})
-                if not company_employees:
-                    st.error("❌ Pas de données employés. Exécutez l'étape 4.")
-                    return False
-                decision_makers = run_step_5_filter_decision_makers(company_employees)
-                st.session_state.decision_makers = decision_makers
-                update_step_state(5, status=StepStatus.COMPLETED, result_count=len(decision_makers))
-                st.write(f"✅ {len(decision_makers)} décideurs")
-
-            elif step == 6:
-                decision_makers = st.session_state.get("decision_makers", [])
-                if not decision_makers:
-                    st.error("❌ Pas de décideurs. Exécutez l'étape 5.")
-                    return False
-                enriched = run_step_6_enrich_contacts(decision_makers)
+        # STEP 6 - Captely
+        with st.spinner("Étape 6/7: Enrichissement Captely..."):
+            st.write("🔄 **Étape 6:** Enrichissement emails/téléphones...")
+            try:
+                enriched = run_step_6_enrich_contacts(all_decision_makers)
                 st.session_state.enriched_contacts = enriched
-                update_step_state(6, status=StepStatus.COMPLETED, result_count=len(enriched))
-                st.write(f"✅ {len(enriched)} contacts enrichis")
+                with_email = len([c for c in enriched if c.get("email")])
+                update_step_state(6, status=StepStatus.COMPLETED, result_count=with_email)
+                st.success(f"✅ Étape 6: {with_email}/{len(enriched)} avec email")
+            except Exception as e:
+                st.error(f"❌ Étape 6 ERREUR: {str(e)}")
+                update_step_state(6, status=StepStatus.FAILED, error_message=str(e))
+                return False
 
-            elif step == 7:
-                contacts = st.session_state.get("enriched_contacts", [])
-                if not contacts:
-                    st.error("❌ Pas de contacts. Exécutez l'étape 6.")
-                    return False
-                filepath = run_step_7_export(contacts)
-                update_step_state(7, status=StepStatus.COMPLETED, result_count=len(contacts))
-                st.write(f"✅ Exporté")
+        # STEP 7 - Export
+        with st.spinner("Étape 7/7: Export final..."):
+            st.write("🔄 **Étape 7:** Export CSV final...")
+            try:
+                filepath = run_step_7_export(enriched)
+                update_step_state(7, status=StepStatus.COMPLETED, result_count=len(enriched))
+                st.success(f"✅ Étape 7: Export terminé!")
+            except Exception as e:
+                st.error(f"❌ Étape 7 ERREUR: {str(e)}")
+                update_step_state(7, status=StepStatus.FAILED, error_message=str(e))
 
-            status.update(label=f"✅ Étape {step} terminée!", state="complete")
-            return True
-
-        except Exception as e:
-            update_step_state(step, status=StepStatus.FAILED, error_message=str(e))
-            st.error(f"❌ Erreur: {e}")
-            status.update(label=f"❌ Étape {step} échouée", state="error")
-            return False
+        st.balloons()
+        st.success("🎉 **Pipeline terminé avec succès!**")
+        return True
 
 
 # ============================================
@@ -307,113 +240,91 @@ def get_api_config():
 st.sidebar.title("⚙️ Configuration")
 
 max_companies = st.sidebar.number_input(
-    "Nombre max entreprises", min_value=1, max_value=1000,
-    value=st.session_state.get("max_companies", 5), step=1
+    "Nb entreprises", min_value=1, max_value=100,
+    value=st.session_state.get("max_companies", 3), step=1,
+    help="Commence petit (3-5) pour tester"
 )
 st.session_state.max_companies = max_companies
 
 skip_phantombuster = st.sidebar.checkbox(
-    "Sauter Phantombuster (utiliser dirigeants Pappers)",
-    value=st.session_state.get("skip_phantombuster", True)
+    "⚡ Mode rapide (sans Phantombuster)",
+    value=st.session_state.get("skip_phantombuster", True),
+    help="Utilise les dirigeants Pappers au lieu de scraper LinkedIn (recommandé)"
 )
 st.session_state.skip_phantombuster = skip_phantombuster
 
-st.sidebar.divider()
-
-# Run buttons
-run_pipeline = st.sidebar.button("🚀 Lancer Pipeline Complet", type="primary", use_container_width=True)
+if not skip_phantombuster:
+    st.sidebar.warning("⚠️ Phantombuster = 2-5 min/entreprise!")
 
 st.sidebar.divider()
-st.sidebar.subheader("Étape individuelle")
 
-selected_step = st.sidebar.selectbox(
-    "Choisir étape", options=list(STEP_NAMES.keys()),
-    format_func=lambda x: f"{x}. {STEP_NAMES[x][0]}"
-)
-run_step = st.sidebar.button(f"▶️ Exécuter Étape {selected_step}", use_container_width=True)
+run_btn = st.sidebar.button("🚀 Lancer Pipeline", type="primary", use_container_width=True)
 
 st.sidebar.divider()
 st.sidebar.subheader("📡 APIs")
 for api, ok in get_api_config().items():
-    st.sidebar.markdown(f"{'✅' if ok else '❌'} {api}")
+    st.sidebar.write(f"{'✅' if ok else '❌'} {api}")
 
 # ============================================
-# MAIN CONTENT
+# MAIN
 # ============================================
 
 st.title("🎯 B2B Lead Enrichment")
-st.caption("Pipeline automatisé de prospection B2B")
 
-# Execute pipeline if button clicked
-if run_pipeline:
-    run_pipeline_with_progress(max_companies, skip_phantombuster)
-
-if run_step:
-    run_single_step_with_progress(selected_step, max_companies)
-
-# Progress overview
+# Progress cards
 st.subheader("📊 Progression")
-completed = get_completed_steps_count()
-st.progress(completed / 7, f"{completed}/7 étapes complétées")
-
-# Step cards
-cols = st.columns(4)
+cols = st.columns(7)
 for i, step in enumerate(range(1, 8)):
-    with cols[i % 4]:
+    with cols[i]:
         state = get_step_state(step)
         status = get_step_status(step)
         icon = STATUS_ICONS.get(status, "⏳")
         color = STATUS_COLORS.get(status, "#6c757d")
-        name = STEP_NAMES[step][0]
+        name = STEP_NAMES[step][0][:8]
         count = state.get("result_count", 0)
 
         st.markdown(f"""
-        <div style="border:2px solid {color};border-radius:8px;padding:8px;margin:2px 0;background:{color}15;text-align:center;">
-            <div style="font-size:1.2em;">{icon}</div>
-            <div><b>{step}. {name}</b></div>
-            <div style="font-size:0.8em;color:#666;">{count} résultats</div>
+        <div style="border:2px solid {color};border-radius:6px;padding:6px;text-align:center;background:{color}15;">
+            <div style="font-size:1.5em;">{icon}</div>
+            <div style="font-size:0.7em;"><b>{step}</b></div>
+            <div style="font-size:0.6em;color:#666;">{count}</div>
         </div>
         """, unsafe_allow_html=True)
-    if i == 3:
-        cols = st.columns(4)
 
 st.divider()
 
-# Data tabs
+# Execute if button clicked
+if run_btn:
+    run_pipeline_with_logs(max_companies, skip_phantombuster)
+
+# Data display
 tab1, tab2 = st.tabs(["🏢 Entreprises", "👤 Contacts"])
 
 with tab1:
     companies = st.session_state.get("companies", [])
     if companies:
         df = pd.DataFrame(companies)
-        cols_to_show = [c for c in ["nom", "siren", "effectif", "linkedin_url"] if c in df.columns]
-        st.dataframe(df[cols_to_show], use_container_width=True, height=300)
-
-        # Download button
+        show_cols = [c for c in ["nom", "siren", "effectif", "linkedin_url"] if c in df.columns]
+        st.dataframe(df[show_cols], use_container_width=True)
         csv = df.to_csv(index=False).encode('utf-8')
-        st.download_button("📥 Télécharger CSV Entreprises", csv, "entreprises.csv", "text/csv")
+        st.download_button("📥 CSV", csv, "entreprises.csv")
     else:
-        st.info("Aucune entreprise. Lancez le pipeline.")
+        st.info("Lancez le pipeline pour voir les données")
 
 with tab2:
     contacts = st.session_state.get("enriched_contacts", []) or st.session_state.get("decision_makers", [])
     if contacts:
         df = pd.DataFrame(contacts)
-        cols_to_show = [c for c in ["name", "title", "entreprise", "email", "phone", "persona_type"] if c in df.columns]
-        st.dataframe(df[cols_to_show], use_container_width=True, height=300)
-
-        # Download button
+        show_cols = [c for c in ["name", "title", "entreprise", "email", "phone"] if c in df.columns]
+        st.dataframe(df[show_cols], use_container_width=True)
         csv = df.to_csv(index=False).encode('utf-8')
-        st.download_button("📥 Télécharger CSV Contacts", csv, "contacts.csv", "text/csv")
+        st.download_button("📥 CSV", csv, "contacts.csv")
     else:
-        st.info("Aucun contact. Lancez le pipeline.")
+        st.info("Lancez le pipeline pour voir les contacts")
 
-# Stats footer
+# Footer
 st.divider()
-c1, c2, c3, c4 = st.columns(4)
-companies = st.session_state.get("companies", [])
-contacts = st.session_state.get("enriched_contacts", [])
-c1.metric("Entreprises", len(companies))
+c1, c2, c3 = st.columns(3)
+c1.metric("Entreprises", len(st.session_state.get("companies", [])))
 c2.metric("Décideurs", len(st.session_state.get("decision_makers", [])))
-c3.metric("Avec Email", len([c for c in contacts if c.get("email")]))
-c4.metric("Avec Tél", len([c for c in contacts if c.get("phone")]))
+c3.metric("Avec Email", len([c for c in st.session_state.get("enriched_contacts", []) if c.get("email")]))
