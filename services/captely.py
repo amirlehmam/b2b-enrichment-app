@@ -90,6 +90,9 @@ class CaptelyClient:
 
         try:
             print(f"  → Soumission de {len(contacts)} contacts pour enrichissement bulk...")
+            print(f"  [DEBUG] URL: {self.base_url}/enrich/bulk")
+            print(f"  [DEBUG] Headers: X-API-Key={self.api_key[:20]}...")
+            print(f"  [DEBUG] Payload sample: {contacts[0] if contacts else 'empty'}")
 
             response = requests.post(
                 f"{self.base_url}/enrich/bulk",
@@ -97,6 +100,10 @@ class CaptelyClient:
                 json=payload,
                 timeout=30
             )
+
+            print(f"  [DEBUG] Response status: {response.status_code}")
+            print(f"  [DEBUG] Response body: {response.text[:500]}")
+
             response.raise_for_status()
             data = response.json()
 
@@ -107,7 +114,7 @@ class CaptelyClient:
         except requests.exceptions.RequestException as e:
             print(f"  ✗ Erreur bulk enrichment: {e}")
             if hasattr(e, 'response') and e.response is not None:
-                print(f"    Response: {e.response.text[:200]}")
+                print(f"    Response: {e.response.text[:500]}")
             return None
 
     def get_bulk_status(self, job_id: str) -> dict:
@@ -118,16 +125,21 @@ class CaptelyClient:
             dict avec status (pending, processing, completed, failed)
         """
         try:
+            url = f"{self.base_url}/enrich/status/{job_id}"
             response = requests.get(
-                f"{self.base_url}/enrich/status/{job_id}",
+                url,
                 headers=self._headers(),
                 timeout=10
             )
+            print(f"  [DEBUG] Status URL: {url}")
+            print(f"  [DEBUG] Status response: {response.status_code} - {response.text[:200]}")
             response.raise_for_status()
             return response.json()
 
         except requests.exceptions.RequestException as e:
             print(f"  ⚠ Erreur status: {e}")
+            if hasattr(e, 'response') and e.response is not None:
+                print(f"    Response: {e.response.text[:200]}")
             return {"status": "error"}
 
     def get_bulk_results(self, job_id: str, page: int = 1, per_page: int = 100) -> dict:
@@ -138,17 +150,23 @@ class CaptelyClient:
             dict avec contacts enrichis
         """
         try:
+            url = f"{self.base_url}/enrich/results/{job_id}"
             response = requests.get(
-                f"{self.base_url}/enrich/results/{job_id}",
+                url,
                 headers=self._headers(),
                 params={"page": page, "per_page": per_page},
                 timeout=30
             )
+            print(f"  [DEBUG] Results URL: {url}")
+            print(f"  [DEBUG] Results response: {response.status_code}")
+            print(f"  [DEBUG] Results body: {response.text[:1000]}")
             response.raise_for_status()
             return response.json()
 
         except requests.exceptions.RequestException as e:
             print(f"  ✗ Erreur résultats: {e}")
+            if hasattr(e, 'response') and e.response is not None:
+                print(f"    Response: {e.response.text[:500]}")
             return {"contacts": [], "results": []}
 
     def wait_for_bulk_completion(
@@ -212,7 +230,7 @@ class CaptelyClient:
 def enrich_contacts_with_captely(decision_makers: list, enrich_phone: bool = True) -> list:
     """
     Enrichit une liste de décideurs avec emails et téléphones.
-    Utilise l'API BULK pour >3 contacts (beaucoup plus rapide).
+    Essaie d'abord l'API BULK, puis fallback vers enrichissement unitaire.
 
     Args:
         decision_makers: Liste des décideurs
@@ -251,9 +269,9 @@ def enrich_contacts_with_captely(decision_makers: list, enrich_phone: bool = Tru
             "first_name": first_name,
             "last_name": last_name,
             "company": company,
+            "linkedin_url": linkedin_url,
+            "original_index": i,
         }
-        if linkedin_url:
-            contact_data["linkedin_url"] = linkedin_url
 
         contacts_for_api.append(contact_data)
         contact_map[f"{first_name}_{last_name}_{company}".lower()] = i
@@ -262,50 +280,88 @@ def enrich_contacts_with_captely(decision_makers: list, enrich_phone: bool = Tru
         print("  ⚠ Aucun contact valide à enrichir")
         return decision_makers
 
-    print(f"\n📧 Enrichissement BULK de {len(contacts_for_api)} contacts...")
+    print(f"\n📧 Enrichissement de {len(contacts_for_api)} contacts...")
 
-    # Utiliser BULK API
-    if len(contacts_for_api) >= 1:
+    # Essayer BULK API d'abord
+    bulk_success = False
+    try:
+        print("  → Tentative API BULK...")
         job_id = client.enrich_bulk(
-            contacts=contacts_for_api,
+            contacts=[{k: v for k, v in c.items() if k != "original_index"} for c in contacts_for_api],
             enrich_email=True,
             enrich_phone=enrich_phone
         )
 
-        if not job_id:
-            print("  ✗ Échec création job bulk")
-            return decision_makers
+        if job_id:
+            if client.wait_for_bulk_completion(job_id, timeout=600, poll_interval=5):
+                results_data = client.get_bulk_results(job_id, per_page=1000)
+                results = results_data.get("contacts", []) or results_data.get("results", []) or results_data.get("data", [])
 
-        # Attendre la fin
-        if not client.wait_for_bulk_completion(job_id, timeout=600, poll_interval=5):
-            print("  ✗ Job bulk non terminé")
-            return decision_makers
+                if results:
+                    print(f"  ✓ BULK: {len(results)} résultats reçus")
+                    bulk_success = True
 
-        # Récupérer les résultats
-        results_data = client.get_bulk_results(job_id, per_page=1000)
-        results = results_data.get("contacts", []) or results_data.get("results", []) or results_data.get("data", [])
+                    # Mapper les résultats
+                    enriched_count = 0
+                    for result in results:
+                        first = result.get("first_name", "")
+                        last = result.get("last_name", "")
+                        comp = result.get("company", "")
+                        key = f"{first}_{last}_{comp}".lower()
 
-        print(f"  ✓ {len(results)} résultats reçus")
+                        if key in contact_map:
+                            idx = contact_map[key]
+                            decision_makers[idx]["email"] = result.get("email")
+                            decision_makers[idx]["email_verified"] = result.get("email_verified", False)
+                            decision_makers[idx]["phone"] = result.get("phone")
+                            decision_makers[idx]["phone_type"] = result.get("phone_type")
 
-        # Mapper les résultats aux contacts originaux
+                            if result.get("email") or result.get("phone"):
+                                enriched_count += 1
+
+                    print(f"  ✓ {enriched_count} contacts enrichis via BULK")
+    except Exception as e:
+        print(f"  ⚠ BULK API échoué: {e}")
+
+    # Fallback: enrichissement unitaire si BULK a échoué
+    if not bulk_success:
+        print("  → Fallback: enrichissement unitaire...")
         enriched_count = 0
-        for result in results:
-            first = result.get("first_name", "")
-            last = result.get("last_name", "")
-            comp = result.get("company", "")
-            key = f"{first}_{last}_{comp}".lower()
 
-            if key in contact_map:
-                idx = contact_map[key]
-                decision_makers[idx]["email"] = result.get("email")
-                decision_makers[idx]["email_verified"] = result.get("email_verified", False)
-                decision_makers[idx]["phone"] = result.get("phone")
-                decision_makers[idx]["phone_type"] = result.get("phone_type")
+        for contact in contacts_for_api:
+            idx = contact["original_index"]
+            dm = decision_makers[idx]
 
-                if result.get("email") or result.get("phone"):
-                    enriched_count += 1
+            try:
+                result = client.enrich_contact(
+                    first_name=contact["first_name"],
+                    last_name=contact["last_name"],
+                    company=contact["company"],
+                    linkedin_url=contact.get("linkedin_url", ""),
+                    enrich_email=True,
+                    enrich_phone=enrich_phone
+                )
 
-        print(f"  ✓ {enriched_count} contacts enrichis avec email/téléphone")
+                if result:
+                    dm["email"] = result.get("email")
+                    dm["email_verified"] = result.get("email_verified", False)
+                    dm["phone"] = result.get("phone")
+                    dm["phone_type"] = result.get("phone_type")
+
+                    if result.get("email") or result.get("phone"):
+                        enriched_count += 1
+                        print(f"    ✓ {contact['first_name']} {contact['last_name']}: {result.get('email', 'N/A')}")
+                    else:
+                        print(f"    ✗ {contact['first_name']} {contact['last_name']}: non trouvé")
+
+            except Exception as e:
+                print(f"    ⚠ Erreur pour {contact['first_name']} {contact['last_name']}: {e}")
+
+            # Petite pause entre les appels
+            import time
+            time.sleep(0.5)
+
+        print(f"  ✓ {enriched_count} contacts enrichis via API unitaire")
 
     return decision_makers
 
