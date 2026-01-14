@@ -61,7 +61,7 @@ class CaptelyClient:
                 url,
                 headers=self._headers(),
                 json=payload,
-                timeout=35
+                timeout=180
             )
 
             print(f"[CAPTELY DEBUG] Status: {response.status_code}")
