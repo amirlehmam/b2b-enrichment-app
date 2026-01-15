@@ -240,15 +240,39 @@ def run_pipeline_with_logs(max_companies, skip_phantombuster):
                     update_step_state(4, status=StepStatus.FAILED, error_message=str(e))
                     return False
 
-            # STEP 5 - Claude Filter
+            # STEP 5 - Claude Filter + PAPPERS DIRIGEANTS
             with st.spinner("Étape 5/9: Filtrage Claude AI..."):
                 st.write("🔄 **Étape 5:** Filtrage décideurs avec Claude...")
                 try:
                     company_employees = st.session_state.get("company_employees", {})
                     all_decision_makers = run_step_5_filter_decision_makers(company_employees)
+
+                    # AUSSI ajouter les dirigeants Pappers (pour avoir les deux sources!)
+                    st.write("   📋 Ajout des dirigeants Pappers...")
+                    pappers_count = 0
+                    existing_names = set(dm.get("name", "").lower() for dm in all_decision_makers)
+
+                    for company in companies:
+                        for dirigeant in company.get("dirigeants", []):
+                            nom = dirigeant.get("nom", "")
+                            if nom and nom.lower() not in existing_names:
+                                all_decision_makers.append({
+                                    "name": nom,
+                                    "firstName": dirigeant.get("prenom", ""),
+                                    "lastName": dirigeant.get("nom", ""),
+                                    "title": dirigeant.get("qualite", ""),
+                                    "entreprise": company["nom"],
+                                    "siren": company["siren"],
+                                    "persona_type": "Dirigeant Pappers",
+                                    "linkedin_url": "",
+                                })
+                                existing_names.add(nom.lower())
+                                pappers_count += 1
+
+                    st.write(f"   ✓ {pappers_count} dirigeants Pappers ajoutés")
                     st.session_state.decision_makers = all_decision_makers
                     update_step_state(5, status=StepStatus.COMPLETED, result_count=len(all_decision_makers))
-                    st.success(f"✅ Étape 5: {len(all_decision_makers)} décideurs identifiés")
+                    st.success(f"✅ Étape 5: {len(all_decision_makers)} décideurs identifiés (Phantombuster + Pappers)")
                 except Exception as e:
                     st.error(f"❌ Étape 5 ERREUR: {str(e)}")
                     update_step_state(5, status=StepStatus.FAILED, error_message=str(e))

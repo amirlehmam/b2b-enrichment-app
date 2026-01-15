@@ -314,6 +314,11 @@ class PhantombusterClient:
 
         valid_employees = []
         for emp in employees:
+            # Skip si c'est une erreur "Out of network" sans nom
+            if emp.get("error") == "Out of network" and not emp.get("name") and not emp.get("fullName"):
+                # Mais on peut quand même avoir le job/location
+                continue
+
             # Chercher l'URL LinkedIn dans tous les champs possibles
             profile_url = (
                 emp.get("profileUrl") or
@@ -362,6 +367,12 @@ class PhantombusterClient:
                 })
 
         print(f"  [DEBUG] Parsé {len(valid_employees)}/{len(employees)} employés valides")
+
+        # Si aucun employé trouvé, c'est probablement un problème de "Out of network"
+        if len(valid_employees) == 0 and len(employees) > 0:
+            print(f"  [WARN] Tous les employés sont 'Out of network' - ton compte LinkedIn n'est pas assez connecté")
+            print(f"  [WARN] Solution: utiliser LinkedIn Sales Navigator ou avoir plus de connexions")
+
         return valid_employees
 
 
