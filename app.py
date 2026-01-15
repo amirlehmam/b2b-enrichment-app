@@ -192,12 +192,19 @@ def run_pipeline_with_logs(max_companies, skip_phantombuster):
                 st.write(f"   → {company.get('nom', '?')}: {len(dirigeants)} dirigeants")
 
                 for dirigeant in dirigeants:
+                    nom_complet = dirigeant.get("nom_complet") or dirigeant.get("nom") or ""
+                    prenom = dirigeant.get("prenom") or ""
+                    nom = dirigeant.get("nom") or ""
+
                     all_decision_makers.append({
-                        "name": dirigeant.get("nom"),
-                        "title": dirigeant.get("qualite"),
+                        "name": nom_complet,
+                        "firstName": prenom,
+                        "lastName": nom,
+                        "title": dirigeant.get("qualite") or "",
                         "entreprise": company["nom"],
                         "siren": company["siren"],
                         "persona_type": "Dirigeant",
+                        "linkedin_url": "",
                     })
 
             st.session_state.decision_makers = all_decision_makers
@@ -254,10 +261,10 @@ def run_pipeline_with_logs(max_companies, skip_phantombuster):
 
                     for company in companies:
                         for dirigeant in company.get("dirigeants", []):
-                            nom = dirigeant.get("nom", "")
-                            if nom and nom.lower() not in existing_names:
+                            nom_complet = dirigeant.get("nom_complet") or dirigeant.get("nom") or ""
+                            if nom_complet and nom_complet.lower() not in existing_names:
                                 all_decision_makers.append({
-                                    "name": nom,
+                                    "name": nom_complet,
                                     "firstName": dirigeant.get("prenom", ""),
                                     "lastName": dirigeant.get("nom", ""),
                                     "title": dirigeant.get("qualite", ""),
@@ -266,7 +273,7 @@ def run_pipeline_with_logs(max_companies, skip_phantombuster):
                                     "persona_type": "Dirigeant Pappers",
                                     "linkedin_url": "",
                                 })
-                                existing_names.add(nom.lower())
+                                existing_names.add(nom_complet.lower())
                                 pappers_count += 1
 
                     st.write(f"   ✓ {pappers_count} dirigeants Pappers ajoutés")

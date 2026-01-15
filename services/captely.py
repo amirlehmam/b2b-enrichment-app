@@ -276,16 +276,24 @@ def enrich_contacts_with_captely(decision_makers: list, enrich_phone: bool = Tru
             print(f"  ⚠ Données manquantes pour {dm.get('name', 'inconnu')}, skip")
             continue
 
+        # Garder le titre/poste pour ne pas le perdre
+        title = dm.get("title") or dm.get("qualite") or dm.get("job") or dm.get("position") or ""
+
         contact_data = {
             "first_name": first_name,
             "last_name": last_name,
             "company": company,
             "linkedin_url": linkedin_url,
+            "title": title,  # Garder le poste!
             "original_index": i,
         }
 
         contacts_for_api.append(contact_data)
         contact_map[f"{first_name}_{last_name}_{company}".lower()] = i
+
+        # S'assurer que le titre est dans decision_makers
+        if title and not dm.get("title"):
+            decision_makers[i]["title"] = title
 
     if not contacts_for_api:
         print("  ⚠ Aucun contact valide à enrichir")
