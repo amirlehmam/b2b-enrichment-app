@@ -306,22 +306,62 @@ class PhantombusterClient:
         else:
             return []
 
+        # DEBUG: afficher un exemple de la structure
+        if employees and len(employees) > 0:
+            sample = employees[0]
+            print(f"  [DEBUG] Premier employé keys: {list(sample.keys())}")
+            print(f"  [DEBUG] Premier employé: {str(sample)[:300]}")
+
         valid_employees = []
         for emp in employees:
-            profile_url = emp.get("profileUrl") or emp.get("linkedInProfileUrl") or emp.get("linkedin_url")
-            name = emp.get("name") or emp.get("fullName") or f"{emp.get('firstName', '')} {emp.get('lastName', '')}".strip()
+            # Chercher l'URL LinkedIn dans tous les champs possibles
+            profile_url = (
+                emp.get("profileUrl") or
+                emp.get("linkedInProfileUrl") or
+                emp.get("linkedin_url") or
+                emp.get("linkedinUrl") or
+                emp.get("url") or
+                emp.get("link") or
+                emp.get("vmid")  # Parfois c'est juste l'ID
+            )
 
-            if profile_url and name:
+            # Si c'est un vmid, construire l'URL
+            if profile_url and not profile_url.startswith("http"):
+                if profile_url.startswith("urn:") or len(profile_url) < 50:
+                    profile_url = f"https://www.linkedin.com/in/{profile_url}"
+
+            # Chercher le nom dans tous les champs possibles
+            name = (
+                emp.get("name") or
+                emp.get("fullName") or
+                emp.get("full_name") or
+                f"{emp.get('firstName', '')} {emp.get('lastName', '')}".strip() or
+                f"{emp.get('first_name', '')} {emp.get('last_name', '')}".strip()
+            )
+
+            # Chercher le titre
+            title = (
+                emp.get("job") or
+                emp.get("title") or
+                emp.get("headline") or
+                emp.get("occupation") or
+                emp.get("position") or
+                ""
+            )
+
+            # Accepter même sans URL LinkedIn si on a un nom
+            if name and name.strip():
                 valid_employees.append({
                     "name": name,
-                    "firstName": emp.get("firstName", ""),
-                    "lastName": emp.get("lastName", ""),
-                    "title": emp.get("job") or emp.get("title") or emp.get("headline", ""),
-                    "linkedin_url": profile_url,
+                    "firstName": emp.get("firstName") or emp.get("first_name", ""),
+                    "lastName": emp.get("lastName") or emp.get("last_name", ""),
+                    "title": title,
+                    "linkedin_url": profile_url or "",
                     "location": emp.get("location", ""),
                     "company_query": emp.get("query", ""),
                 })
 
+        print(f"  [DEBUG] Parsé {len(valid_employees)}/{len(employees)} employés valides")
         return valid_employees
 
 
