@@ -142,11 +142,27 @@ def enrich_companies_with_linkedin(companies: list) -> list:
     client = EnrichCRMClient()
     enriched = []
 
+    # Debug: vérifier API key
+    print(f"  [DEBUG] Enrich CRM API Key configurée: {'✅' if client.api_key else '❌'}")
+    if client.api_key:
+        print(f"  [DEBUG] API Key: {client.api_key[:20]}...")
+
     for company in companies:
         print(f"  Enrichissement de {company['nom']}...")
 
         # Essayer par nom d'entreprise
         data = client.enrich_by_company_name(company["nom"])
+
+        # DEBUG: afficher la structure de réponse
+        if data:
+            print(f"    [DEBUG] Réponse keys: {list(data.keys())[:10]}")
+            if "company" in data:
+                print(f"    [DEBUG] company keys: {list(data['company'].keys())[:10]}")
+                if "firmographics" in data.get("company", {}):
+                    firmographics = data["company"]["firmographics"]
+                    print(f"    [DEBUG] firmographics keys: {list(firmographics.keys())[:10]}")
+        else:
+            print(f"    [DEBUG] Réponse vide ou erreur")
 
         # Chercher LinkedIn URL dans différents emplacements possibles
         linkedin_url = None
@@ -155,9 +171,17 @@ def enrich_companies_with_linkedin(companies: list) -> list:
             firmographics = data.get("company", {}).get("firmographics", {})
             linkedin_url = (
                 firmographics.get("linkedinUrl") or
+                firmographics.get("linkedin") or
                 data.get("linkedinUrl") or
-                data.get("company", {}).get("linkedinUrl")
+                data.get("linkedin") or
+                data.get("company", {}).get("linkedinUrl") or
+                data.get("company", {}).get("linkedin")
             )
+
+            # Aussi chercher dans socials si présent
+            socials = data.get("company", {}).get("socials", {})
+            if not linkedin_url and socials:
+                linkedin_url = socials.get("linkedin") or socials.get("linkedinUrl")
 
         company["linkedin_url"] = linkedin_url
         company["enrich_data"] = data  # Garder toutes les données
