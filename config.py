@@ -52,6 +52,8 @@ CLAUDE_BASE_URL = "https://api.anthropic.com/v1"
 # ============================================
 
 PHANTOMBUSTER_AGENT_ID = get_secret("PHANTOMBUSTER_AGENT_ID")
+# Session cookie LinkedIn (li_at) - optionnel si déjà configuré dans l'agent
+LINKEDIN_SESSION_COOKIE = get_secret("LINKEDIN_SESSION_COOKIE")
 
 # ============================================
 # EMELIA CONFIG
